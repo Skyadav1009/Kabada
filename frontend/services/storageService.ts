@@ -2,6 +2,11 @@ import { Container, ContainerSummary, FileMeta, Message } from '../types';
 
 const API_BASE = 'https://quickshare-1-9gjk.onrender.com/api';
 
+// const API_BASE = 'http://localhost:5000/api';
+
+
+
+
 // Helper for API calls
 async function apiRequest<T>(
   endpoint: string,
@@ -170,6 +175,8 @@ export const getUploadedImageUrl = (imageUrl: string): string => {
   if (imageUrl.startsWith('http')) {
     return imageUrl;
   }
-  // Convert relative API path to full URL
-  return `http://localhost:5000${imageUrl}`;
+  // Convert relative API path to full URL using the same base as API
+  // API_BASE is like 'https://quickshare-1-9gjk.onrender.com/api', we need the origin
+  const baseUrl = API_BASE.replace('/api', '');
+  return `${baseUrl}${imageUrl}`;
 };

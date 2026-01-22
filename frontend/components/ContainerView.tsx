@@ -401,7 +401,15 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                             src={getUploadedImageUrl(msg.imageUrl)} 
                             alt="Shared image"
                             className="max-w-full rounded mb-2 cursor-pointer"
-                            onClick={() => window.open(getUploadedImageUrl(msg.imageUrl), '_blank')}
+                            onClick={() => {
+                              const link = document.createElement('a');
+                              link.href = getUploadedImageUrl(msg.imageUrl);
+                              link.download = `chat-image-${msg.id}.png`;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }}
+                            title="Click to download"
                           />
                         )}
                         {msg.text && <p className="text-sm">{msg.text}</p>}
