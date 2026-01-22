@@ -10,6 +10,17 @@ const fileSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+const messageSchema = new mongoose.Schema({
+  sender: { 
+    type: String, 
+    enum: ['owner', 'visitor'], 
+    required: true 
+  },
+  text: { type: String, default: '' },
+  imageUrl: { type: String, default: '' }, // For image messages
+  createdAt: { type: Date, default: Date.now }
+});
+
 const containerSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -26,6 +37,7 @@ const containerSchema = new mongoose.Schema({
     default: ''
   },
   files: [fileSchema],
+  messages: [messageSchema],
   createdAt: {
     type: Date,
     default: Date.now
@@ -67,6 +79,13 @@ containerSchema.methods.toSafeObject = function() {
       type: f.mimetype,
       size: f.size,
       createdAt: f.createdAt
+    })),
+    messages: this.messages.map(m => ({
+      id: m._id,
+      sender: m.sender,
+      text: m.text,
+      imageUrl: m.imageUrl,
+      createdAt: m.createdAt
     })),
     createdAt: this.createdAt,
     lastAccessed: this.lastAccessed

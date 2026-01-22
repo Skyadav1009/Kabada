@@ -263,4 +263,116 @@ router.delete('/:id/files/:fileId', async (req, res) => {
   }
 });
 
+// Get messages for a container
+router.get('/:id/messages', async (req, res) => {
+  try {
+    const container = await Container.findById(req.params.id);
+
+    if (!container) {
+      return res.status(404).json({ error: 'Container not found' });
+    }
+
+    const messages = container.messages.map(m => ({
+      id: m._id,
+      sender: m.sender,
+      text: m.text,
+      imageUrl: m.imageUrl,
+      createdAt: m.createdAt
+    }));
+
+    res.json(messages);
+  } catch (error) {
+    console.error('Get messages error:', error);
+    res.status(500).json({ error: 'Failed to get messages' });
+  }
+});
+
+// Send a message to a container
+router.post('/:id/messages', async (req, res) => {
+  try {
+    const { sender, text, imageUrl } = req.body;
+    const container = await Container.findById(req.params.id);
+
+    if (!container) {
+      return res.status(404).json({ error: 'Container not found' });
+    }
+
+    if (!sender || (!text && !imageUrl)) {
+      return res.status(400).json({ error: 'Sender and either text or image are required' });
+    }
+
+    if (!['owner', 'visitor'].includes(sender)) {
+      return res.status(400).json({ error: 'Sender must be "owner" or "visitor"' });
+    }
+
+    const newMessage = {
+      sender,
+      text: text || '',
+      imageUrl: imageUrl || ''
+    };
+
+    container.messages.push(newMessage);
+    container.lastAccessed = new Date();
+    await container.save();
+
+    const addedMessage = container.messages[container.messages.length - 1];
+    
+    res.status(201).json({
+      id: addedMessage._id,
+      sender: addedMessage.sender,
+      text: addedMessage.text,
+      imageUrl: addedMessage.imageUrl,
+      createdAt: addedMessage.createdAt
+    });
+  } catch (error) {
+    console.error('Send message error:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+// Upload image for chat message
+router.post('/:id/messages/image', upload.single('image'), async (req, res) => {
+  try {
+    const container = await Container.findById(req.params.id);
+
+    if (!container) {
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(404).json({ error: 'Container not found' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image uploaded' });
+    }
+
+    // Return the URL to access the image
+    const imageUrl = `/api/containers/${req.params.id}/uploads/${req.file.filename}`;
+    
+    res.status(201).json({ imageUrl });
+  } catch (error) {
+    console.error('Image upload error:', error);
+    if (req.file) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
+// Serve uploaded images/files
+router.get('/:id/uploads/:filename', async (req, res) => {
+  try {
+    const filePath = path.join(__dirname, '..', 'uploads', req.params.filename);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error('Serve file error:', error);
+    res.status(500).json({ error: 'Failed to serve file' });
+  }
+});
+
 module.exports = router;

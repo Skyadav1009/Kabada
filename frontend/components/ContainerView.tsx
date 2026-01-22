@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, FileMeta } from '../types';
-import { updateContainerText, addFileToContainer, removeFileFromContainer, getFileDownloadUrl } from '../services/storageService';
+import { Container, FileMeta, Message } from '../types';
+import { updateContainerText, addFileToContainer, removeFileFromContainer, getFileDownloadUrl, sendMessage, uploadChatImage, getUploadedImageUrl } from '../services/storageService';
 import Button from './Button';
-import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw } from 'lucide-react';
+import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon } from 'lucide-react';
 
 interface ContainerViewProps {
   container: Container;
@@ -11,18 +11,34 @@ interface ContainerViewProps {
 }
 
 const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContainer, onClose }) => {
-  const [activeTab, setActiveTab] = useState<'files' | 'text'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'text' | 'chat'>('files');
   const [text, setText] = useState(container.textContent);
   const [isSavingText, setIsSavingText] = useState(false);
   const [textSaved, setTextSaved] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   
+  // Chat states
+  const [messages, setMessages] = useState<Message[]>(container.messages || []);
+  const [chatMessage, setChatMessage] = useState('');
+  const [chatRole, setChatRole] = useState<'owner' | 'visitor'>('visitor');
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [pastedImage, setPastedImage] = useState<File | null>(null);
+  const [pastedImagePreview, setPastedImagePreview] = useState<string>('');
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatImageInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Sync text when container changes
+  // Sync text and messages when container changes
   useEffect(() => {
     setText(container.textContent);
-  }, [container.textContent]);
+    setMessages(container.messages || []);
+  }, [container.textContent, container.messages]);
+
+  // Scroll to bottom of chat when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // Manual save text function
   const handleSaveText = async () => {
@@ -77,6 +93,76 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
     alert('Copied to clipboard!');
   };
 
+  // Chat functions
+  const handleSendMessage = async () => {
+    if (!chatMessage.trim() && !pastedImage) return;
+    
+    setIsSendingMessage(true);
+    try {
+      let imageUrl = '';
+      
+      // Upload image if pasted
+      if (pastedImage) {
+        imageUrl = await uploadChatImage(container.id, pastedImage);
+      }
+      
+      await sendMessage(container.id, chatRole, chatMessage, imageUrl);
+      setChatMessage('');
+      setPastedImage(null);
+      setPastedImagePreview('');
+      refreshContainer();
+    } catch (error) {
+      alert('Failed to send message');
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
+  // Handle paste for screenshots
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          setPastedImage(file);
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            setPastedImagePreview(e.target?.result as string);
+          };
+          reader.readAsDataURL(file);
+        }
+        break;
+      }
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setPastedImage(file);
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setPastedImagePreview(ev.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const clearPastedImage = () => {
+    setPastedImage(null);
+    setPastedImagePreview('');
+  };
+
+  // Check if file is an image
+  const isImageFile = (file: FileMeta) => {
+    return file.type.startsWith('image/');
+  };
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       <div className="bg-white rounded-lg shadow-xl overflow-hidden min-h-[600px] flex flex-col">
@@ -100,7 +186,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
           <nav className="-mb-px flex">
             <button
               onClick={() => setActiveTab('files')}
-              className={`w-1/2 py-4 px-1 text-center border-b-2 font-medium text-sm ${
+              className={`w-1/3 py-4 px-1 text-center border-b-2 font-medium text-sm ${
                 activeTab === 'files'
                   ? 'border-indigo-500 text-indigo-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -110,13 +196,24 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
             </button>
             <button
               onClick={() => setActiveTab('text')}
-              className={`w-1/2 py-4 px-1 text-center border-b-2 font-medium text-sm ${
+              className={`w-1/3 py-4 px-1 text-center border-b-2 font-medium text-sm ${
                 activeTab === 'text'
                   ? 'border-indigo-500 text-indigo-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               Shared Text
+            </button>
+            <button
+              onClick={() => setActiveTab('chat')}
+              className={`w-1/3 py-4 px-1 text-center border-b-2 font-medium text-sm flex items-center justify-center gap-1 ${
+                activeTab === 'chat'
+                  ? 'border-indigo-500 text-indigo-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <MessageCircle className="h-4 w-4" />
+              Chat ({messages.length})
             </button>
           </nav>
         </div>
@@ -162,9 +259,19 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                           <p className="mt-1 text-gray-500 text-xs truncate">{(file.size / 1024).toFixed(1)} KB</p>
                           <p className="text-gray-400 text-xs">{new Date(file.createdAt).toLocaleTimeString()}</p>
                         </div>
-                        <div className="bg-indigo-100 p-2 rounded-full">
-                           <FileText className="h-6 w-6 text-indigo-600" />
-                        </div>
+                        {isImageFile(file) ? (
+                          <div className="flex-shrink-0 w-16 h-16 rounded overflow-hidden">
+                            <img 
+                              src={getFileDownloadUrl(container.id, file.id)} 
+                              alt={file.name}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        ) : (
+                          <div className="bg-indigo-100 p-2 rounded-full">
+                            <FileText className="h-6 w-6 text-indigo-600" />
+                          </div>
+                        )}
                       </div>
                       <div className="-mt-px flex divide-x divide-gray-200">
                         <div className="w-0 flex-1 flex">
@@ -234,6 +341,141 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                   style={{ minHeight: '300px' }}
                 />
               </div>
+            </div>
+          )}
+
+          {activeTab === 'chat' && (
+            <div className="h-full flex flex-col" style={{ minHeight: '400px' }}>
+              {/* Role selector */}
+              <div className="mb-4 flex items-center space-x-4">
+                <span className="text-sm text-gray-600">Chat as:</span>
+                <div className="flex rounded-md overflow-hidden border border-gray-300">
+                  <button
+                    onClick={() => setChatRole('owner')}
+                    className={`px-4 py-2 text-sm font-medium ${
+                      chatRole === 'owner'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    Owner
+                  </button>
+                  <button
+                    onClick={() => setChatRole('visitor')}
+                    className={`px-4 py-2 text-sm font-medium ${
+                      chatRole === 'visitor'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    Visitor
+                  </button>
+                </div>
+              </div>
+
+              {/* Messages */}
+              <div className="flex-1 bg-white border border-gray-200 rounded-lg overflow-y-auto p-4 space-y-3" style={{ maxHeight: '300px' }}>
+                {messages.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <MessageCircle className="mx-auto h-12 w-12 text-gray-300 mb-2" />
+                    <p>No messages yet. Start a conversation!</p>
+                  </div>
+                ) : (
+                  messages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`flex ${msg.sender === 'owner' ? 'justify-start' : 'justify-end'}`}
+                    >
+                      <div
+                        className={`max-w-[70%] rounded-lg px-4 py-2 ${
+                          msg.sender === 'owner'
+                            ? 'bg-gray-200 text-gray-800'
+                            : 'bg-indigo-600 text-white'
+                        }`}
+                      >
+                        <div className="text-xs opacity-70 mb-1">
+                          {msg.sender === 'owner' ? '👤 Owner' : '👋 Visitor'}
+                        </div>
+                        {msg.imageUrl && (
+                          <img 
+                            src={getUploadedImageUrl(msg.imageUrl)} 
+                            alt="Shared image"
+                            className="max-w-full rounded mb-2 cursor-pointer"
+                            onClick={() => window.open(getUploadedImageUrl(msg.imageUrl), '_blank')}
+                          />
+                        )}
+                        {msg.text && <p className="text-sm">{msg.text}</p>}
+                        <div className="text-xs opacity-50 mt-1">
+                          {new Date(msg.createdAt).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Image preview */}
+              {pastedImagePreview && (
+                <div className="mt-2 relative inline-block">
+                  <img 
+                    src={pastedImagePreview} 
+                    alt="To send" 
+                    className="max-h-24 rounded border border-gray-300"
+                  />
+                  <button
+                    onClick={clearPastedImage}
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {/* Message input */}
+              <div className="mt-4 flex space-x-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={chatImageInputRef}
+                  onChange={handleImageUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => chatImageInputRef.current?.click()}
+                  className="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                  title="Attach image"
+                >
+                  <ImageIcon className="h-5 w-5" />
+                </button>
+                <input
+                  type="text"
+                  value={chatMessage}
+                  onChange={(e) => setChatMessage(e.target.value)}
+                  onPaste={handlePaste}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                  placeholder="Type a message or paste a screenshot..."
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={isSendingMessage || (!chatMessage.trim() && !pastedImage)}
+                  className={`px-4 py-2 rounded-lg flex items-center space-x-2 ${
+                    isSendingMessage || (!chatMessage.trim() && !pastedImage)
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                  }`}
+                >
+                  {isSendingMessage ? (
+                    <RefreshCw className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Send className="h-5 w-5" />
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">
+                💡 Tip: Paste screenshots directly from clipboard (Ctrl+V)
+              </p>
             </div>
           )}
         </div>

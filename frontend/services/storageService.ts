@@ -1,6 +1,6 @@
-import { Container, ContainerSummary, FileMeta } from '../types';
+import { Container, ContainerSummary, FileMeta, Message } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE = 'https://quickshare-1-9gjk.onrender.com/api';
 
 // Helper for API calls
 async function apiRequest<T>(
@@ -124,4 +124,52 @@ export const removeFileFromContainer = async (containerId: string, fileId: strin
 // Get download URL for a file
 export const getFileDownloadUrl = (containerId: string, fileId: string): string => {
   return `${API_BASE}/containers/${containerId}/files/${fileId}/download`;
+};
+
+// Get messages for a container
+export const getMessages = async (containerId: string): Promise<Message[]> => {
+  const data = await apiRequest<Message[]>(`/containers/${containerId}/messages`);
+  return data;
+};
+
+// Send a message to a container
+export const sendMessage = async (
+  containerId: string, 
+  sender: 'owner' | 'visitor', 
+  text: string,
+  imageUrl?: string
+): Promise<Message> => {
+  const data = await apiRequest<Message>(`/containers/${containerId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ sender, text, imageUrl: imageUrl || '' }),
+  });
+  return data;
+};
+
+// Upload image for chat and return the URL
+export const uploadChatImage = async (containerId: string, file: File): Promise<string> => {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const response = await fetch(`${API_BASE}/containers/${containerId}/messages/image`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(error.error || 'Upload failed');
+  }
+
+  const data = await response.json();
+  return data.imageUrl;
+};
+
+// Get full URL for uploaded images
+export const getUploadedImageUrl = (imageUrl: string): string => {
+  if (imageUrl.startsWith('http')) {
+    return imageUrl;
+  }
+  // Convert relative API path to full URL
+  return `http://localhost:5000${imageUrl}`;
 };

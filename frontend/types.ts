@@ -7,11 +7,20 @@ export interface FileMeta {
   createdAt: number;
 }
 
+export interface Message {
+  id: string;
+  sender: 'owner' | 'visitor';
+  text: string;
+  imageUrl: string;
+  createdAt: number;
+}
+
 export interface Container {
   id: string;
   name: string;
   passwordHash: string; // In a real app, hash this. Here we simulate it.
   files: FileMeta[];
+  messages: Message[];
   textContent: string;
   createdAt: number;
   lastAccessed: number;
