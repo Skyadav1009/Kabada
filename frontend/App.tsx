@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [createName, setCreateName] = useState('');
   const [createPassword, setCreatePassword] = useState('');
   const [createMaxViews, setCreateMaxViews] = useState('');
+  const [oneTimeOpen, setOneTimeOpen] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -77,6 +78,7 @@ const App: React.FC = () => {
       setCreateName('');
       setCreatePassword('');
       setCreateMaxViews('');
+      setOneTimeOpen(false);
     } catch (err: any) {
       setErrorMsg(err.message);
     }
@@ -326,6 +328,36 @@ const App: React.FC = () => {
                     </div>
 
                     <div>
+                      <label className="block text-sm font-medium text-zinc-300 mb-2">Access Options</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOneTimeOpen(!oneTimeOpen);
+                          if (!oneTimeOpen) setCreateMaxViews('1');
+                          else setCreateMaxViews('');
+                        }}
+                        className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-all ${
+                          oneTimeOpen 
+                            ? 'bg-amber-500/20 border-amber-500 text-amber-400' 
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Eye className="h-5 w-5" />
+                          <div className="text-left">
+                            <p className="font-medium text-sm">One-Time Open</p>
+                            <p className="text-xs opacity-70">Container deletes after first view</p>
+                          </div>
+                        </div>
+                        <div className={`w-10 h-6 rounded-full transition-all flex items-center ${
+                          oneTimeOpen ? 'bg-amber-500 justify-end' : 'bg-zinc-600 justify-start'
+                        }`}>
+                          <div className="w-4 h-4 bg-white rounded-full mx-1"></div>
+                        </div>
+                      </button>
+                    </div>
+
+                    <div className={oneTimeOpen ? 'opacity-50 pointer-events-none' : ''}>
                       <label className="block text-sm font-medium text-zinc-300">View Limit (Optional)</label>
                       <div className="mt-1">
                         <input
@@ -333,7 +365,8 @@ const App: React.FC = () => {
                           min="0"
                           value={createMaxViews}
                           onChange={(e) => setCreateMaxViews(e.target.value)}
-                          className="appearance-none block w-full px-3 py-2 border border-zinc-700 rounded-md shadow-sm bg-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
+                          disabled={oneTimeOpen}
+                          className="appearance-none block w-full px-3 py-2 border border-zinc-700 rounded-md shadow-sm bg-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm disabled:opacity-50"
                           placeholder="0 = Unlimited views"
                         />
                       </div>
