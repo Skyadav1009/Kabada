@@ -23,9 +23,17 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 50 * 1024 * 1024 // 50MB default
+    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 500 * 1024 * 1024 // 500MB default
   }
 });
+
+// Multiple files upload config
+const uploadMultiple = multer({
+  storage,
+  limits: {
+    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 500 * 1024 * 1024 // 500MB default
+  }
+}).array('files', 20); // Max 20 files at once
 
 // Create a new container
 router.post('/', async (req, res) => {
@@ -203,6 +211,68 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
     }
     res.status(500).json({ error: 'Failed to upload file' });
   }
+});
+
+// Upload multiple files to container
+router.post('/:id/files/multiple', (req, res) => {
+  uploadMultiple(req, res, async (err) => {
+    if (err) {
+      console.error('Multiple file upload error:', err);
+      return res.status(400).json({ error: err.message || 'Upload failed' });
+    }
+
+    try {
+      const container = await Container.findById(req.params.id);
+
+      if (!container) {
+        // Delete uploaded files if container not found
+        if (req.files && req.files.length > 0) {
+          req.files.forEach(file => fs.unlinkSync(file.path));
+        }
+        return res.status(404).json({ error: 'Container not found' });
+      }
+
+      if (!req.files || req.files.length === 0) {
+        return res.status(400).json({ error: 'No files uploaded' });
+      }
+
+      const addedFiles = [];
+
+      for (const file of req.files) {
+        const fileData = {
+          filename: file.filename,
+          originalName: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          path: file.path
+        };
+        container.files.push(fileData);
+        addedFiles.push(container.files[container.files.length - 1]);
+      }
+
+      container.lastAccessed = new Date();
+      await container.save();
+
+      res.status(201).json({
+        success: true,
+        files: addedFiles.map(f => ({
+          id: f._id,
+          name: f.originalName,
+          type: f.mimetype,
+          size: f.size,
+          createdAt: f.createdAt
+        }))
+      });
+    } catch (error) {
+      console.error('Multiple file upload error:', error);
+      if (req.files && req.files.length > 0) {
+        req.files.forEach(file => {
+          try { fs.unlinkSync(file.path); } catch (e) {}
+        });
+      }
+      res.status(500).json({ error: 'Failed to upload files' });
+    }
+  });
 });
 
 // Download file from container

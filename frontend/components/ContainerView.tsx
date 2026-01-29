@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Container, FileMeta, Message } from '../types';
-import { updateContainerText, addFileToContainer, removeFileFromContainer, getFileDownloadUrl, sendMessage, uploadChatImage, getUploadedImageUrl } from '../services/storageService';
+import { updateContainerText, addFileToContainer, addFilesToContainer, removeFileFromContainer, getFileDownloadUrl, sendMessage, uploadChatImage, getUploadedImageUrl } from '../services/storageService';
 import Button from './Button';
-import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon } from 'lucide-react';
+import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload } from 'lucide-react';
 
 interface ContainerViewProps {
   container: Container;
@@ -16,6 +16,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
   const [isSavingText, setIsSavingText] = useState(false);
   const [textSaved, setTextSaved] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string>('');
+  const [isDragging, setIsDragging] = useState(false);
   
   // Chat states
   const [messages, setMessages] = useState<Message[]>(container.messages || []);
@@ -57,16 +59,60 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setIsUploading(true);
-      try {
-        await addFileToContainer(container.id, e.target.files[0]);
-        refreshContainer();
-      } catch (error: any) {
-        alert(error.message || "Upload failed");
-      } finally {
-        setIsUploading(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
+      const files = Array.from(e.target.files);
+      await uploadFiles(files);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    setIsUploading(true);
+    setUploadProgress(`Uploading ${files.length} file${files.length > 1 ? 's' : ''}...`);
+    try {
+      if (files.length === 1) {
+        await addFileToContainer(container.id, files[0]);
+      } else {
+        await addFilesToContainer(container.id, files);
       }
+      refreshContainer();
+    } catch (error: any) {
+      alert(error.message || "Upload failed");
+    } finally {
+      setIsUploading(false);
+      setUploadProgress('');
+    }
+  };
+
+  // Drag and drop handlers
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (activeTab === 'files') {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (activeTab !== 'files') return;
+
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length > 0) {
+      await uploadFiles(droppedFiles);
     }
   };
 
@@ -219,11 +265,33 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
         </div>
 
         {/* Content */}
-        <div className="flex-1 p-3 sm:p-6 bg-zinc-950">
+        <div 
+          className={`flex-1 p-3 sm:p-6 bg-zinc-950 transition-colors ${isDragging ? 'bg-amber-500/10' : ''}`}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          {/* Drag overlay */}
+          {isDragging && (
+            <div className="fixed inset-0 z-50 bg-zinc-950/90 flex items-center justify-center pointer-events-none">
+              <div className="text-center p-8 border-4 border-dashed border-amber-500 rounded-2xl bg-zinc-900/50">
+                <CloudUpload className="mx-auto h-16 w-16 text-amber-500 mb-4" />
+                <p className="text-xl font-medium text-white">Drop files here to upload</p>
+                <p className="text-sm text-zinc-400 mt-2">Release to upload your files</p>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'files' && (
             <div className="space-y-4 sm:space-y-6">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-                <h3 className="text-base sm:text-lg font-medium text-white">Stored Files</h3>
+                <div>
+                  <h3 className="text-base sm:text-lg font-medium text-white">Stored Files</h3>
+                  {uploadProgress && (
+                    <p className="text-xs text-amber-400 mt-1">{uploadProgress}</p>
+                  )}
+                </div>
                 <div className="relative">
                   <input
                     type="file"
@@ -231,21 +299,35 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                     onChange={handleFileUpload}
                     className="hidden"
                     id="file-upload"
+                    multiple
                   />
                   <label
                     htmlFor="file-upload"
                     className={`cursor-pointer inline-flex items-center px-3 sm:px-4 py-2 border border-transparent text-sm font-medium rounded-md text-zinc-900 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 shadow-sm w-full sm:w-auto justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     <Upload className="h-4 w-4 mr-2" />
-                    {isUploading ? 'Uploading...' : 'Upload File'}
+                    {isUploading ? 'Uploading...' : 'Upload Files'}
                   </label>
                 </div>
               </div>
 
+              {/* Drag and drop zone when no files */}
               {container.files.length === 0 ? (
-                <div className="text-center py-8 sm:py-12 border-2 border-dashed border-zinc-700 rounded-lg">
-                  <FileText className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-zinc-600" />
-                  <p className="mt-2 text-xs sm:text-sm text-zinc-500">No files yet. Upload one to share.</p>
+                <div 
+                  className={`text-center py-8 sm:py-12 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                    isDragging 
+                      ? 'border-amber-500 bg-amber-500/10' 
+                      : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-900/50'
+                  }`}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <CloudUpload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-zinc-600" />
+                  <p className="mt-2 text-xs sm:text-sm text-zinc-500">
+                    Drag & drop files here or click to browse
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-600">
+                    Max 500MB per file • Any file type
+                  </p>
                 </div>
               ) : (
                 <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
@@ -297,6 +379,11 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                   ))}
                 </ul>
               )}
+
+              {/* Drag and drop hint */}
+              <div className="mt-4 text-center text-xs text-zinc-600">
+                💡 Tip: Drag & drop files anywhere to upload
+              </div>
             </div>
           )}
 

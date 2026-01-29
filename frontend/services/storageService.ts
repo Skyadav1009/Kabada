@@ -119,6 +119,25 @@ export const addFileToContainer = async (id: string, file: File): Promise<FileMe
   return response.json();
 };
 
+// Add multiple files to container
+export const addFilesToContainer = async (id: string, files: File[]): Promise<FileMeta[]> => {
+  const formData = new FormData();
+  files.forEach(file => formData.append('files', file));
+
+  const response = await fetch(`${API_BASE}/containers/${id}/files/multiple`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(error.error || 'Upload failed');
+  }
+
+  const data = await response.json();
+  return data.files;
+};
+
 // Remove file from container
 export const removeFileFromContainer = async (containerId: string, fileId: string): Promise<void> => {
   await apiRequest<{ success: boolean }>(`/containers/${containerId}/files/${fileId}`, {
