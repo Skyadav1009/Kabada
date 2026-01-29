@@ -3,25 +3,42 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { v2: cloudinary } = require('cloudinary');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Container = require('../models/Container');
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '..', 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Configure Cloudinary storage for multer
+const cloudinaryStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: async (req, file) => {
+    // Determine resource type based on mimetype
+    let resourceType = 'auto';
+    if (file.mimetype.startsWith('video/')) {
+      resourceType = 'video';
+    } else if (file.mimetype.startsWith('image/')) {
+      resourceType = 'image';
+    } else {
+      resourceType = 'raw'; // For documents, archives, etc.
     }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
+    
+    return {
+      folder: 'kabada-uploads',
+      resource_type: resourceType,
+      public_id: `${Date.now()}-${Math.round(Math.random() * 1E9)}-${file.originalname.replace(/\.[^/.]+$/, '')}`,
+      allowed_formats: null, // Allow all formats
+    };
   }
 });
 
 const upload = multer({
-  storage,
+  storage: cloudinaryStorage,
   limits: {
     fileSize: parseInt(process.env.MAX_FILE_SIZE) || 500 * 1024 * 1024 // 500MB default
   }
@@ -29,7 +46,7 @@ const upload = multer({
 
 // Multiple files upload config
 const uploadMultiple = multer({
-  storage,
+  storage: cloudinaryStorage,
   limits: {
     fileSize: parseInt(process.env.MAX_FILE_SIZE) || 500 * 1024 * 1024 // 500MB default
   }
@@ -126,12 +143,15 @@ router.post('/:id/verify', async (req, res) => {
 
     // Check if view limit reached (maxViews > 0 means limited views)
     if (container.maxViews > 0 && container.currentViews >= container.maxViews) {
-      // Delete container files from disk
-      const fs = require('fs');
-      const path = require('path');
+      // Delete container files from Cloudinary
       for (const file of container.files) {
         try {
-          fs.unlinkSync(file.path);
+          if (file.publicId) {
+            const resourceType = file.resourceType || 'raw';
+            await cloudinary.uploader.destroy(file.publicId, { resource_type: resourceType });
+          } else if (file.path && !file.path.startsWith('http') && fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
         } catch (e) {
           console.error('Error deleting file:', e);
         }
@@ -198,9 +218,9 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
     const container = await Container.findById(req.params.id);
 
     if (!container) {
-      // Delete uploaded file if container not found
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
+      // Delete uploaded file from Cloudinary if container not found
+      if (req.file && req.file.filename) {
+        await cloudinary.uploader.destroy(req.file.filename);
       }
       return res.status(404).json({ error: 'Container not found' });
     }
@@ -214,7 +234,10 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
       originalName: req.file.originalname,
       mimetype: req.file.mimetype,
       size: req.file.size,
-      path: req.file.path
+      path: req.file.path, // Cloudinary URL
+      publicId: req.file.filename, // Cloudinary public_id
+      resourceType: req.file.mimetype.startsWith('video/') ? 'video' : 
+                    req.file.mimetype.startsWith('image/') ? 'image' : 'raw'
     };
 
     container.files.push(fileData);
@@ -232,8 +255,8 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
     });
   } catch (error) {
     console.error('File upload error:', error);
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
+    if (req.file && req.file.filename) {
+      await cloudinary.uploader.destroy(req.file.filename).catch(() => {});
     }
     res.status(500).json({ error: 'Failed to upload file' });
   }
@@ -251,9 +274,11 @@ router.post('/:id/files/multiple', (req, res) => {
       const container = await Container.findById(req.params.id);
 
       if (!container) {
-        // Delete uploaded files if container not found
+        // Delete uploaded files from Cloudinary if container not found
         if (req.files && req.files.length > 0) {
-          req.files.forEach(file => fs.unlinkSync(file.path));
+          for (const file of req.files) {
+            await cloudinary.uploader.destroy(file.filename).catch(() => {});
+          }
         }
         return res.status(404).json({ error: 'Container not found' });
       }
@@ -270,7 +295,10 @@ router.post('/:id/files/multiple', (req, res) => {
           originalName: file.originalname,
           mimetype: file.mimetype,
           size: file.size,
-          path: file.path
+          path: file.path, // Cloudinary URL
+          publicId: file.filename, // Cloudinary public_id
+          resourceType: file.mimetype.startsWith('video/') ? 'video' : 
+                        file.mimetype.startsWith('image/') ? 'image' : 'raw'
         };
         container.files.push(fileData);
         addedFiles.push(container.files[container.files.length - 1]);
@@ -292,9 +320,9 @@ router.post('/:id/files/multiple', (req, res) => {
     } catch (error) {
       console.error('Multiple file upload error:', error);
       if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-          try { fs.unlinkSync(file.path); } catch (e) {}
-        });
+        for (const file of req.files) {
+          await cloudinary.uploader.destroy(file.filename).catch(() => {});
+        }
       }
       res.status(500).json({ error: 'Failed to upload files' });
     }
@@ -435,6 +463,12 @@ router.get('/:id/files/:fileId/download', async (req, res) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
+    // For Cloudinary files, redirect to the Cloudinary URL
+    if (file.path.startsWith('http')) {
+      return res.redirect(file.path);
+    }
+
+    // Fallback for old local files
     if (!fs.existsSync(file.path)) {
       return res.status(404).json({ error: 'File not found on disk' });
     }
@@ -461,8 +495,14 @@ router.delete('/:id/files/:fileId', async (req, res) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
-    // Delete file from disk
-    if (fs.existsSync(file.path)) {
+    // Delete file from Cloudinary if it has a publicId
+    if (file.publicId) {
+      const resourceType = file.resourceType || 'raw';
+      await cloudinary.uploader.destroy(file.publicId, { resource_type: resourceType }).catch(err => {
+        console.error('Cloudinary delete error:', err);
+      });
+    } else if (file.path && fs.existsSync(file.path)) {
+      // Fallback for old local files
       fs.unlinkSync(file.path);
     }
 

@@ -18,6 +18,21 @@ if (!rootElement) {
   throw new Error("Could not find root element to mount to");
 }
 
+// In dev, unregister any previously-registered service workers and clear caches
+// This ensures stale cached index.html (LegacyLink) doesn't persist.
+if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(regs => {
+      regs.forEach(r => {
+        r.unregister().then(() => console.log('Service worker unregistered (dev)'));
+      });
+    }).catch(() => {});
+  }
+  if (window.caches) {
+    caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => console.log('Caches cleared (dev)')).catch(() => {});
+  }
+}
+
 // Diagnostic log so you can confirm the app boot is attempted
 // eslint-disable-next-line no-console
 console.log('Mounting React app...');

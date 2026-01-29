@@ -6,7 +6,9 @@ const fileSchema = new mongoose.Schema({
   originalName: { type: String, required: true },
   mimetype: { type: String, required: true },
   size: { type: Number, required: true },
-  path: { type: String, required: true },
+  path: { type: String, required: true }, // Cloudinary URL or local path
+  publicId: { type: String, default: '' }, // Cloudinary public_id for deletion
+  resourceType: { type: String, default: 'auto' }, // Cloudinary resource type
   createdAt: { type: Date, default: Date.now }
 });
 
