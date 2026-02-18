@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
+import { ToastProvider } from './components/Toast';
 
 // Basic global handlers to ensure errors are visible in console
 window.addEventListener('error', (e) => {
@@ -26,10 +27,10 @@ if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
       regs.forEach(r => {
         r.unregister().then(() => console.log('Service worker unregistered (dev)'));
       });
-    }).catch(() => {});
+    }).catch(() => { });
   }
   if (window.caches) {
-    caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => console.log('Caches cleared (dev)')).catch(() => {});
+    caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => console.log('Caches cleared (dev)')).catch(() => { });
   }
 }
 
@@ -41,7 +42,9 @@ const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      <ToastProvider>
+        <App />
+      </ToastProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );

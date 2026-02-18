@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { Container, FileMeta, Message } from '../types';
-import { updateContainerText, addFileToContainer, addFilesToContainer, addFileWithProgress, removeFileFromContainer, getFileDownloadUrl, sendMessage, uploadChatImage, getUploadedImageUrl } from '../services/storageService';
+import { updateContainerText, addFileToContainer, addFilesToContainer, addFileWithProgress, removeFileFromContainer, getFileDownloadUrl, getDownloadAllUrl, sendMessage, uploadChatImage, getUploadedImageUrl } from '../services/storageService';
 import Button from './Button';
-import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye } from 'lucide-react';
+import { useToast } from './Toast';
+import ShareModal from './ShareModal';
+import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown } from 'lucide-react';
 
 // Socket.IO server URL (matches API_BASE without /api)
-const SOCKET_URL = window.location.hostname === 'localhost' 
-  ? 'http://localhost:5000' 
+const SOCKET_URL = window.location.hostname === 'localhost'
+  ? 'http://localhost:5000'
   : 'https://quickshare-1-9gjk.onrender.com';
 
 interface ContainerViewProps {
@@ -17,6 +19,7 @@ interface ContainerViewProps {
 }
 
 const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContainer, onClose }) => {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<'files' | 'text' | 'chat'>('files');
   const [text, setText] = useState(container.textContent);
   const [isSavingText, setIsSavingText] = useState(false);
@@ -26,7 +29,9 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
   const [uploadPercent, setUploadPercent] = useState<number>(0);
   const [isDragging, setIsDragging] = useState(false);
   const [previewFile, setPreviewFile] = useState<FileMeta | null>(null);
-  
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [textCopied, setTextCopied] = useState(false);
+
   // Chat states
   const [messages, setMessages] = useState<Message[]>(container.messages || []);
   const [chatMessage, setChatMessage] = useState('');
@@ -34,7 +39,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [pastedImage, setPastedImage] = useState<File | null>(null);
   const [pastedImagePreview, setPastedImagePreview] = useState<string>('');
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -88,9 +93,10 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
       await updateContainerText(container.id, text);
       setTextSaved(true);
       setTimeout(() => setTextSaved(false), 2000);
+      toast.success('Text saved successfully');
       refreshContainer();
     } catch (error) {
-      alert('Failed to save text');
+      toast.error('Failed to save text');
     } finally {
       setIsSavingText(false);
     }
@@ -113,7 +119,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
     try {
       for (const file of files) {
         setUploadProgress(`Uploading ${file.name} (${completedFiles + 1}/${totalFiles})...`);
-        
+
         // Use chunked upload for files > 5MB
         if (file.size > 5 * 1024 * 1024) {
           await addFileWithProgress(container.id, file, (percent) => {
@@ -129,7 +135,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
       }
       refreshContainer();
     } catch (error: any) {
-      alert(error.message || "Upload failed");
+      toast.error(error.message || 'Upload failed');
     } finally {
       setIsUploading(false);
       setUploadProgress('');
@@ -141,55 +147,55 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
   const getFileIcon = (file: FileMeta) => {
     const type = file.type.toLowerCase();
     const name = file.name.toLowerCase();
-    
+
     // Images
     if (type.startsWith('image/')) return null; // Will show thumbnail
-    
+
     // Videos
     if (type.startsWith('video/') || ['.mp4', '.avi', '.mov', '.mkv', '.webm'].some(ext => name.endsWith(ext))) {
       return <FileVideo className="h-8 w-8 text-purple-400" />;
     }
-    
+
     // Audio
     if (type.startsWith('audio/') || ['.mp3', '.wav', '.flac', '.aac', '.ogg'].some(ext => name.endsWith(ext))) {
       return <FileAudio className="h-8 w-8 text-pink-400" />;
     }
-    
+
     // PDF
     if (type === 'application/pdf' || name.endsWith('.pdf')) {
       return <FileType className="h-8 w-8 text-red-400" />;
     }
-    
+
     // Word documents
     if (type.includes('word') || ['.doc', '.docx', '.odt'].some(ext => name.endsWith(ext))) {
       return <FileText className="h-8 w-8 text-blue-400" />;
     }
-    
+
     // Excel/Spreadsheets
     if (type.includes('sheet') || type.includes('excel') || ['.xls', '.xlsx', '.csv'].some(ext => name.endsWith(ext))) {
       return <FileSpreadsheet className="h-8 w-8 text-green-400" />;
     }
-    
+
     // PowerPoint
     if (type.includes('presentation') || ['.ppt', '.pptx'].some(ext => name.endsWith(ext))) {
       return <Presentation className="h-8 w-8 text-orange-400" />;
     }
-    
+
     // Archives
     if (['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2'].some(ext => name.endsWith(ext))) {
       return <FileArchive className="h-8 w-8 text-yellow-400" />;
     }
-    
+
     // Code files
     if (['.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.cpp', '.c', '.html', '.css', '.json', '.xml', '.yml', '.yaml', '.md'].some(ext => name.endsWith(ext))) {
       return <FileCode className="h-8 w-8 text-cyan-400" />;
     }
-    
+
     // APK/Apps
     if (['.apk', '.exe', '.dmg', '.msi', '.deb', '.rpm'].some(ext => name.endsWith(ext))) {
       return <Play className="h-8 w-8 text-green-500" />;
     }
-    
+
     // Default
     return <File className="h-8 w-8 text-zinc-400" />;
   };
@@ -198,11 +204,11 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
   const canPreview = (file: FileMeta) => {
     const type = file.type.toLowerCase();
     const name = file.name.toLowerCase();
-    return type.startsWith('image/') || 
-           type.startsWith('video/') || 
-           type.startsWith('audio/') ||
-           type === 'application/pdf' ||
-           ['.mp4', '.webm', '.mp3', '.wav', '.pdf'].some(ext => name.endsWith(ext));
+    return type.startsWith('image/') ||
+      type.startsWith('video/') ||
+      type.startsWith('audio/') ||
+      type === 'application/pdf' ||
+      ['.mp4', '.webm', '.mp3', '.wav', '.pdf'].some(ext => name.endsWith(ext));
   };
 
   // Drag and drop handlers
@@ -240,8 +246,13 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
 
   const handleRemoveFile = async (fileId: string) => {
     if (confirm('Are you sure you want to delete this file?')) {
-      await removeFileFromContainer(container.id, fileId);
-      refreshContainer();
+      try {
+        await removeFileFromContainer(container.id, fileId);
+        toast.success('File deleted');
+        refreshContainer();
+      } catch {
+        toast.error('Failed to delete file');
+      }
     }
   };
 
@@ -258,29 +269,36 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
 
   const handleCopyText = () => {
     navigator.clipboard.writeText(text);
-    alert('Copied to clipboard!');
+    setTextCopied(true);
+    toast.success('Copied to clipboard!');
+    setTimeout(() => setTextCopied(false), 2000);
+  };
+
+  const handleDownloadAll = () => {
+    const url = getDownloadAllUrl(container.id);
+    window.open(url, '_blank');
   };
 
   // Chat functions
   const handleSendMessage = async () => {
     if (!chatMessage.trim() && !pastedImage) return;
-    
+
     setIsSendingMessage(true);
     try {
       let imageUrl = '';
-      
+
       // Upload image if pasted
       if (pastedImage) {
         imageUrl = await uploadChatImage(container.id, pastedImage);
       }
-      
+
       await sendMessage(container.id, chatRole, chatMessage, imageUrl);
       setChatMessage('');
       setPastedImage(null);
       setPastedImagePreview('');
       refreshContainer();
     } catch (error) {
-      alert('Failed to send message');
+      toast.error('Failed to send message');
     } finally {
       setIsSendingMessage(false);
     }
@@ -352,9 +370,18 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
               ID: {container.id.slice(0, 8)}...
             </p>
           </div>
-          <Button variant="secondary" onClick={onClose} size="sm" className="text-xs sm:text-sm ml-2 whitespace-nowrap">
-            Close
-          </Button>
+          <div className="flex items-center gap-2 ml-2">
+            <button
+              onClick={() => setShowShareModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-md text-xs sm:text-sm font-medium bg-zinc-900/20 text-zinc-900 hover:bg-zinc-900/30 border border-zinc-900/20 transition-colors"
+            >
+              <Share2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Share</span>
+            </button>
+            <Button variant="secondary" onClick={onClose} size="sm" className="text-xs sm:text-sm whitespace-nowrap">
+              Close
+            </Button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -362,31 +389,28 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
           <nav className="-mb-px flex">
             <button
               onClick={() => setActiveTab('files')}
-              className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm ${
-                activeTab === 'files'
+              className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm ${activeTab === 'files'
                   ? 'border-amber-500 text-amber-400'
                   : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
-              }`}
+                }`}
             >
               Files ({container.files.length})
             </button>
             <button
               onClick={() => setActiveTab('text')}
-              className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm ${
-                activeTab === 'text'
+              className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm ${activeTab === 'text'
                   ? 'border-amber-500 text-amber-400'
                   : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
-              }`}
+                }`}
             >
               Text
             </button>
             <button
               onClick={() => setActiveTab('chat')}
-              className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm flex items-center justify-center gap-1 ${
-                activeTab === 'chat'
+              className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm flex items-center justify-center gap-1 ${activeTab === 'chat'
                   ? 'border-amber-500 text-amber-400'
                   : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
-              }`}
+                }`}
             >
               <MessageCircle className="h-3 w-3 sm:h-4 sm:w-4" />
               <span className="hidden xs:inline">Chat</span> ({messages.length})
@@ -395,7 +419,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
         </div>
 
         {/* Content */}
-        <div 
+        <div
           className={`flex-1 p-3 sm:p-6 bg-zinc-950 transition-colors ${isDragging ? 'bg-amber-500/10' : ''}`}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}
@@ -422,7 +446,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                     <div className="mt-2">
                       <p className="text-xs text-amber-400 mb-1">{uploadProgress}</p>
                       <div className="w-48 bg-zinc-700 rounded-full h-2">
-                        <div 
+                        <div
                           className="bg-gradient-to-r from-amber-400 to-yellow-500 h-2 rounded-full transition-all duration-300"
                           style={{ width: `${uploadPercent}%` }}
                         />
@@ -431,33 +455,44 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                     </div>
                   )}
                 </div>
-                <div className="relative">
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileUpload}
-                    className="hidden"
-                    id="file-upload"
-                    multiple
-                  />
-                  <label
-                    htmlFor="file-upload"
-                    className={`cursor-pointer inline-flex items-center px-3 sm:px-4 py-2 border border-transparent text-sm font-medium rounded-md text-zinc-900 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 shadow-sm w-full sm:w-auto justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    {isUploading ? 'Uploading...' : 'Upload Files'}
-                  </label>
+                <div className="flex gap-2">
+                  {container.files.length > 1 && (
+                    <button
+                      onClick={handleDownloadAll}
+                      className="inline-flex items-center px-3 sm:px-4 py-2 border border-zinc-700 text-sm font-medium rounded-md text-zinc-200 bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                    >
+                      <FolderDown className="h-4 w-4 mr-2" />
+                      <span className="hidden sm:inline">Download All</span>
+                      <span className="sm:hidden">All</span>
+                    </button>
+                  )}
+                  <div className="relative">
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      id="file-upload"
+                      multiple
+                    />
+                    <label
+                      htmlFor="file-upload"
+                      className={`cursor-pointer inline-flex items-center px-3 sm:px-4 py-2 border border-transparent text-sm font-medium rounded-md text-zinc-900 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 shadow-sm w-full sm:w-auto justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      {isUploading ? 'Uploading...' : 'Upload Files'}
+                    </label>
+                  </div>
                 </div>
               </div>
 
               {/* Drag and drop zone when no files */}
               {container.files.length === 0 ? (
-                <div 
-                  className={`text-center py-8 sm:py-12 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
-                    isDragging 
-                      ? 'border-amber-500 bg-amber-500/10' 
+                <div
+                  className={`text-center py-8 sm:py-12 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${isDragging
+                      ? 'border-amber-500 bg-amber-500/10'
                       : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-900/50'
-                  }`}
+                    }`}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <CloudUpload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-zinc-600" />
@@ -473,13 +508,13 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                   {container.files.map((file) => (
                     <li key={file.id} className="col-span-1 bg-zinc-800 rounded-lg shadow border border-zinc-700 hover:border-amber-500/50 transition-colors overflow-hidden group">
                       {/* Thumbnail/Icon Area */}
-                      <div 
+                      <div
                         className="relative aspect-square bg-zinc-900 flex items-center justify-center cursor-pointer"
                         onClick={() => canPreview(file) && setPreviewFile(file)}
                       >
                         {isImageFile(file) ? (
-                          <img 
-                            src={getFileDownloadUrl(container.id, file.id)} 
+                          <img
+                            src={getFileDownloadUrl(container.id, file.id)}
                             alt={file.name}
                             className="w-full h-full object-cover"
                           />
@@ -535,43 +570,51 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
           {activeTab === 'text' && (
             <div className="h-full flex flex-col space-y-3 sm:space-y-4">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-0">
-                 <div className="flex items-center space-x-2">
-                    <h3 className="text-base sm:text-lg font-medium text-white">Shared Clipboard</h3>
-                    {textSaved && (
-                        <span className="text-xs text-emerald-400 flex items-center">
-                          <Check className="h-3 w-3 mr-1" /> Saved!
-                        </span>
+                <div className="flex items-center space-x-2">
+                  <h3 className="text-base sm:text-lg font-medium text-white">Shared Clipboard</h3>
+                  {textSaved && (
+                    <span className="text-xs text-emerald-400 flex items-center">
+                      <Check className="h-3 w-3 mr-1" /> Saved!
+                    </span>
+                  )}
+                </div>
+                <div className="flex space-x-2">
+                  <Button
+                    variant="primary"
+                    onClick={handleSaveText}
+                    disabled={isSavingText}
+                    className="flex items-center text-sm flex-1 sm:flex-none justify-center"
+                  >
+                    {isSavingText ? (
+                      <RefreshCw className="h-4 w-4 mr-1 sm:mr-2 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4 mr-1 sm:mr-2" />
                     )}
-                 </div>
-                 <div className="flex space-x-2">
-                   <Button 
-                     variant="primary" 
-                     onClick={handleSaveText} 
-                     disabled={isSavingText}
-                     className="flex items-center text-sm flex-1 sm:flex-none justify-center"
-                   >
-                     {isSavingText ? (
-                       <RefreshCw className="h-4 w-4 mr-1 sm:mr-2 animate-spin" />
-                     ) : (
-                       <Save className="h-4 w-4 mr-1 sm:mr-2" />
-                     )}
-                     {isSavingText ? 'Saving...' : 'Save'}
-                   </Button>
-                   <Button variant="ghost" onClick={handleCopyText} title="Copy to local clipboard" className="flex-1 sm:flex-none justify-center">
-                     <Copy className="h-4 w-4 mr-1 sm:mr-2" />
-                     Copy
-                   </Button>
-                 </div>
+                    {isSavingText ? 'Saving...' : 'Save'}
+                  </Button>
+                  <Button variant="ghost" onClick={handleCopyText} title="Copy to local clipboard" className="flex-1 sm:flex-none justify-center">
+                    {textCopied ? (
+                      <Check className="h-4 w-4 mr-1 sm:mr-2 text-emerald-400" />
+                    ) : (
+                      <Copy className="h-4 w-4 mr-1 sm:mr-2" />
+                    )}
+                    {textCopied ? 'Copied!' : 'Copy'}
+                  </Button>
+                </div>
               </div>
-              
+
               <div className="flex-1 relative">
                 <textarea
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   className="w-full h-full p-3 sm:p-4 border border-zinc-700 rounded-lg bg-zinc-800 text-white placeholder-zinc-500 focus:ring-amber-500 focus:border-amber-500 resize-none font-mono text-sm"
                   placeholder="Type or paste text here to share..."
-                  style={{ minHeight: '250px' }}
+                  style={{ minHeight: '220px' }}
                 />
+                <div className="mt-2 flex justify-between text-xs text-zinc-500">
+                  <span>{text.length} characters</span>
+                  <span>{text.trim() ? text.trim().split(/\s+/).length : 0} words</span>
+                </div>
               </div>
             </div>
           )}
@@ -584,21 +627,19 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                 <div className="flex rounded-md overflow-hidden border border-zinc-700 w-full sm:w-auto">
                   <button
                     onClick={() => setChatRole('owner')}
-                    className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium ${
-                      chatRole === 'owner'
+                    className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium ${chatRole === 'owner'
                         ? 'bg-amber-500 text-zinc-900'
                         : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                    }`}
+                      }`}
                   >
                     Owner
                   </button>
                   <button
                     onClick={() => setChatRole('visitor')}
-                    className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium ${
-                      chatRole === 'visitor'
+                    className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium ${chatRole === 'visitor'
                         ? 'bg-amber-500 text-zinc-900'
                         : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                    }`}
+                      }`}
                   >
                     Visitor
                   </button>
@@ -619,18 +660,17 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                       className={`flex ${msg.sender === 'owner' ? 'justify-start' : 'justify-end'}`}
                     >
                       <div
-                        className={`max-w-[85%] sm:max-w-[70%] rounded-lg px-3 sm:px-4 py-2 ${
-                          msg.sender === 'owner'
+                        className={`max-w-[85%] sm:max-w-[70%] rounded-lg px-3 sm:px-4 py-2 ${msg.sender === 'owner'
                             ? 'bg-zinc-700 text-zinc-200'
                             : 'bg-gradient-to-r from-amber-500 to-yellow-500 text-zinc-900'
-                        }`}
+                          }`}
                       >
                         <div className="text-xs opacity-70 mb-1">
                           {msg.sender === 'owner' ? '👤 Owner' : '👋 Visitor'}
                         </div>
                         {msg.imageUrl && (
-                          <img 
-                            src={getUploadedImageUrl(msg.imageUrl)} 
+                          <img
+                            src={getUploadedImageUrl(msg.imageUrl)}
                             alt="Shared image"
                             className="max-w-full rounded mb-2 cursor-pointer active:opacity-75"
                             onClick={() => {
@@ -658,9 +698,9 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
               {/* Image preview */}
               {pastedImagePreview && (
                 <div className="mt-2 relative inline-block">
-                  <img 
-                    src={pastedImagePreview} 
-                    alt="To send" 
+                  <img
+                    src={pastedImagePreview}
+                    alt="To send"
                     className="max-h-20 sm:max-h-24 rounded border border-zinc-600"
                   />
                   <button
@@ -700,11 +740,10 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                 <button
                   onClick={handleSendMessage}
                   disabled={isSendingMessage || (!chatMessage.trim() && !pastedImage)}
-                  className={`px-3 sm:px-4 py-2 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                    isSendingMessage || (!chatMessage.trim() && !pastedImage)
+                  className={`px-3 sm:px-4 py-2 rounded-lg flex items-center justify-center flex-shrink-0 ${isSendingMessage || (!chatMessage.trim() && !pastedImage)
                       ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
                       : 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 hover:from-amber-500 hover:to-yellow-600 active:from-amber-600 active:to-yellow-700'
-                  }`}
+                    }`}
                 >
                   {isSendingMessage ? (
                     <RefreshCw className="h-5 w-5 animate-spin" />
@@ -723,7 +762,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
 
       {/* File Preview Modal */}
       {previewFile && (
-        <div 
+        <div
           className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
           onClick={() => setPreviewFile(null)}
         >
@@ -735,31 +774,31 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
             >
               ✕ Close
             </button>
-            
+
             {/* Preview content */}
             <div className="bg-zinc-900 rounded-lg overflow-hidden">
               {isImageFile(previewFile) && (
-                <img 
-                  src={getFileDownloadUrl(container.id, previewFile.id)} 
+                <img
+                  src={getFileDownloadUrl(container.id, previewFile.id)}
                   alt={previewFile.name}
                   className="max-w-full max-h-[80vh] mx-auto"
                 />
               )}
-              
+
               {previewFile.type.startsWith('video/') && (
-                <video 
+                <video
                   src={getFileDownloadUrl(container.id, previewFile.id)}
                   controls
                   autoPlay
                   className="max-w-full max-h-[80vh] mx-auto"
                 />
               )}
-              
+
               {previewFile.type.startsWith('audio/') && (
                 <div className="p-8 flex flex-col items-center">
                   <FileAudio className="h-24 w-24 text-pink-400 mb-4" />
                   <p className="text-white mb-4">{previewFile.name}</p>
-                  <audio 
+                  <audio
                     src={getFileDownloadUrl(container.id, previewFile.id)}
                     controls
                     autoPlay
@@ -767,16 +806,16 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                   />
                 </div>
               )}
-              
+
               {previewFile.type === 'application/pdf' && (
-                <iframe 
+                <iframe
                   src={getFileDownloadUrl(container.id, previewFile.id)}
                   className="w-full h-[80vh]"
                   title={previewFile.name}
                 />
               )}
             </div>
-            
+
             {/* File info */}
             <div className="mt-4 text-center">
               <p className="text-white font-medium">{previewFile.name}</p>
@@ -791,6 +830,15 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
             </div>
           </div>
         </div>
+      )}
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <ShareModal
+          containerId={container.id}
+          containerName={container.name}
+          onClose={() => setShowShareModal(false)}
+        />
       )}
     </div>
   );

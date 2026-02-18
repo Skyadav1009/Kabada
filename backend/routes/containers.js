@@ -3,6 +3,9 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
+const archiver = require('archiver');
 const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Container = require('../models/Container');
@@ -482,6 +485,77 @@ router.get('/:id/files/:fileId/download', async (req, res) => {
   } catch (error) {
     console.error('Download error:', error);
     res.status(500).json({ error: 'Failed to download file' });
+  }
+});
+
+// Download all files as a ZIP archive
+router.get('/:id/files/download-all', async (req, res) => {
+  try {
+    const container = await Container.findById(req.params.id);
+
+    if (!container) {
+      return res.status(404).json({ error: 'Container not found' });
+    }
+
+    if (container.files.length === 0) {
+      return res.status(400).json({ error: 'No files to download' });
+    }
+
+    // Set response headers for ZIP download
+    const zipFilename = `${container.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`);
+
+    // Create archiver instance
+    const archive = archiver('zip', { zlib: { level: 5 } });
+
+    archive.on('error', (err) => {
+      console.error('Archive error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to create archive' });
+      }
+    });
+
+    // Pipe archive to response
+    archive.pipe(res);
+
+    // Add each file to the archive
+    for (const file of container.files) {
+      if (file.path && file.path.startsWith('http')) {
+        // Fetch from Cloudinary URL
+        try {
+          const fileStream = await new Promise((resolve, reject) => {
+            const protocol = file.path.startsWith('https') ? https : http;
+            protocol.get(file.path, (response) => {
+              if (response.statusCode === 301 || response.statusCode === 302) {
+                // Follow redirect
+                const redirectProto = response.headers.location.startsWith('https') ? https : http;
+                redirectProto.get(response.headers.location, (redirectRes) => {
+                  resolve(redirectRes);
+                }).on('error', reject);
+              } else {
+                resolve(response);
+              }
+            }).on('error', reject);
+          });
+          archive.append(fileStream, { name: file.originalName });
+        } catch (e) {
+          console.error(`Error fetching file ${file.originalName} from Cloudinary:`, e);
+        }
+      } else if (file.path && fs.existsSync(file.path)) {
+        // Local file
+        archive.append(fs.createReadStream(file.path), { name: file.originalName });
+      }
+    }
+
+    // Finalize the archive
+    await archive.finalize();
+
+  } catch (error) {
+    console.error('Download all error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to download files' });
+    }
   }
 });
 

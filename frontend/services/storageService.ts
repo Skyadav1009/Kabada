@@ -13,7 +13,7 @@ async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
-  
+
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -36,18 +36,18 @@ export const createContainer = async (name: string, password: string, maxViews?:
     method: 'POST',
     body: JSON.stringify({ name, password, maxViews: maxViews || 0 }),
   });
-  
+
   return data;
 };
 
 // Search containers by name
 export const searchContainers = async (query: string): Promise<ContainerSummary[]> => {
   if (!query.trim()) return [];
-  
+
   const data = await apiRequest<ContainerSummary[]>(
     `/containers/search?q=${encodeURIComponent(query)}`
   );
-  
+
   return data;
 };
 
@@ -140,14 +140,14 @@ export const addFilesToContainer = async (id: string, files: File[]): Promise<Fi
 
 // Chunked upload with progress for large files
 export const addFileWithProgress = async (
-  id: string, 
-  file: File, 
+  id: string,
+  file: File,
   onProgress: (percent: number) => void
 ): Promise<FileMeta> => {
   const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   const uploadId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
+
   // For files smaller than chunk size, use regular upload
   if (totalChunks <= 1) {
     const formData = new FormData();
@@ -169,7 +169,7 @@ export const addFileWithProgress = async (
     const start = chunkIndex * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, file.size);
     const chunk = file.slice(start, end);
-    
+
     const formData = new FormData();
     formData.append('chunk', chunk);
     formData.append('uploadId', uploadId);
@@ -213,6 +213,11 @@ export const getFileDownloadUrl = (containerId: string, fileId: string): string 
   return `${API_BASE}/containers/${containerId}/files/${fileId}/download`;
 };
 
+// Get download-all ZIP URL
+export const getDownloadAllUrl = (containerId: string): string => {
+  return `${API_BASE}/containers/${containerId}/files/download-all`;
+};
+
 // Get messages for a container
 export const getMessages = async (containerId: string): Promise<Message[]> => {
   const data = await apiRequest<Message[]>(`/containers/${containerId}/messages`);
@@ -221,8 +226,8 @@ export const getMessages = async (containerId: string): Promise<Message[]> => {
 
 // Send a message to a container
 export const sendMessage = async (
-  containerId: string, 
-  sender: 'owner' | 'visitor', 
+  containerId: string,
+  sender: 'owner' | 'visitor',
   text: string,
   imageUrl?: string
 ): Promise<Message> => {
