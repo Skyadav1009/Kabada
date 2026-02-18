@@ -12,6 +12,7 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/quickshare';
+const { initCronJobs } = require('./cron');
 
 // Debug: Print masked URI to verify it's being read correctly
 console.log('MongoDB URI loaded:', MONGODB_URI ? MONGODB_URI.replace(/:([^@]+)@/, ':****@') : 'NOT SET');
@@ -33,7 +34,7 @@ app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -97,6 +98,7 @@ mongoose.connect(MONGODB_URI)
     server.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
       console.log('🔌 Socket.IO ready for real-time connections');
+      initCronJobs();
     });
   })
   .catch((error) => {

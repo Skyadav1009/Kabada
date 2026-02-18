@@ -27,7 +27,7 @@ const cloudinaryStorage = new CloudinaryStorage({
     } else {
       resourceType = 'raw'; // For documents, archives, etc.
     }
-    
+
     return {
       folder: 'kabada-uploads',
       resource_type: resourceType,
@@ -62,10 +62,10 @@ router.post('/', async (req, res) => {
     }
 
     // Check if container name already exists (case-insensitive)
-    const existing = await Container.findOne({ 
-      name: { $regex: new RegExp(`^${name}$`, 'i') } 
+    const existing = await Container.findOne({
+      name: { $regex: new RegExp(`^${name}$`, 'i') }
     });
-    
+
     if (existing) {
       return res.status(409).json({ error: 'Container name already exists. Please choose another.' });
     }
@@ -102,7 +102,7 @@ router.get('/recent', async (req, res) => {
 router.get('/search', async (req, res) => {
   try {
     const { q } = req.query;
-    
+
     if (!q || q.trim().length === 0) {
       return res.json([]);
     }
@@ -110,8 +110,8 @@ router.get('/search', async (req, res) => {
     const containers = await Container.find({
       name: { $regex: q, $options: 'i' }
     })
-    .sort({ createdAt: -1 })
-    .limit(20);
+      .sort({ createdAt: -1 })
+      .limit(20);
 
     res.json(containers.map(c => c.toSummary()));
   } catch (error) {
@@ -131,7 +131,7 @@ router.post('/:id/verify', async (req, res) => {
     }
 
     const isValid = await container.verifyPassword(password);
-    
+
     if (!isValid) {
       return res.status(401).json({ error: 'Incorrect password' });
     }
@@ -156,15 +156,15 @@ router.post('/:id/verify', async (req, res) => {
           console.error('Error deleting file:', e);
         }
       }
-      
+
       // Return the container data before deleting
       const safeData = container.toSafeObject();
       safeData.deleted = true;
       safeData.message = 'This container has reached its view limit and will be deleted.';
-      
+
       // Delete container from database
       await Container.findByIdAndDelete(req.params.id);
-      
+
       return res.json(safeData);
     }
 
@@ -179,6 +179,11 @@ router.post('/:id/verify', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const container = await Container.findById(req.params.id);
+
+    if (container) {
+      container.lastAccessed = new Date();
+      container.save().catch(err => console.error('Error updating lastAccessed:', err));
+    }
 
     if (!container) {
       return res.status(404).json({ error: 'Container not found' });
@@ -236,8 +241,8 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
       size: req.file.size,
       path: req.file.path, // Cloudinary URL
       publicId: req.file.filename, // Cloudinary public_id
-      resourceType: req.file.mimetype.startsWith('video/') ? 'video' : 
-                    req.file.mimetype.startsWith('image/') ? 'image' : 'raw'
+      resourceType: req.file.mimetype.startsWith('video/') ? 'video' :
+        req.file.mimetype.startsWith('image/') ? 'image' : 'raw'
     };
 
     container.files.push(fileData);
@@ -245,7 +250,7 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
     await container.save();
 
     const addedFile = container.files[container.files.length - 1];
-    
+
     res.status(201).json({
       id: addedFile._id,
       name: addedFile.originalName,
@@ -256,7 +261,7 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
   } catch (error) {
     console.error('File upload error:', error);
     if (req.file && req.file.filename) {
-      await cloudinary.uploader.destroy(req.file.filename).catch(() => {});
+      await cloudinary.uploader.destroy(req.file.filename).catch(() => { });
     }
     res.status(500).json({ error: 'Failed to upload file' });
   }
@@ -277,7 +282,7 @@ router.post('/:id/files/multiple', (req, res) => {
         // Delete uploaded files from Cloudinary if container not found
         if (req.files && req.files.length > 0) {
           for (const file of req.files) {
-            await cloudinary.uploader.destroy(file.filename).catch(() => {});
+            await cloudinary.uploader.destroy(file.filename).catch(() => { });
           }
         }
         return res.status(404).json({ error: 'Container not found' });
@@ -297,8 +302,8 @@ router.post('/:id/files/multiple', (req, res) => {
           size: file.size,
           path: file.path, // Cloudinary URL
           publicId: file.filename, // Cloudinary public_id
-          resourceType: file.mimetype.startsWith('video/') ? 'video' : 
-                        file.mimetype.startsWith('image/') ? 'image' : 'raw'
+          resourceType: file.mimetype.startsWith('video/') ? 'video' :
+            file.mimetype.startsWith('image/') ? 'image' : 'raw'
         };
         container.files.push(fileData);
         addedFiles.push(container.files[container.files.length - 1]);
@@ -321,7 +326,7 @@ router.post('/:id/files/multiple', (req, res) => {
       console.error('Multiple file upload error:', error);
       if (req.files && req.files.length > 0) {
         for (const file of req.files) {
-          await cloudinary.uploader.destroy(file.filename).catch(() => {});
+          await cloudinary.uploader.destroy(file.filename).catch(() => { });
         }
       }
       res.status(500).json({ error: 'Failed to upload files' });
@@ -337,7 +342,7 @@ router.post('/:id/files/chunk', upload.single('chunk'), async (req, res) => {
   try {
     const { uploadId, chunkIndex, totalChunks, filename, fileType, fileSize } = req.body;
     const containerId = req.params.id;
-    
+
     if (!req.file) {
       return res.status(400).json({ error: 'No chunk uploaded' });
     }
@@ -372,7 +377,7 @@ router.post('/:id/files/chunk', upload.single('chunk'), async (req, res) => {
     if (!container) {
       // Clean up chunks
       uploadData.chunks.forEach(chunkPath => {
-        try { fs.unlinkSync(chunkPath); } catch (e) {}
+        try { fs.unlinkSync(chunkPath); } catch (e) { }
       });
       chunkUploads.delete(uploadKey);
       return res.status(404).json({ error: 'Container not found' });
@@ -385,16 +390,16 @@ router.post('/:id/files/chunk', upload.single('chunk'), async (req, res) => {
     const finalPath = path.join(uploadDir, finalFilename);
 
     const writeStream = fs.createWriteStream(finalPath);
-    
+
     for (const chunkPath of uploadData.chunks) {
       const chunkData = fs.readFileSync(chunkPath);
       writeStream.write(chunkData);
       // Delete chunk after reading
       fs.unlinkSync(chunkPath);
     }
-    
+
     writeStream.end();
-    
+
     // Wait for write to complete
     await new Promise((resolve, reject) => {
       writeStream.on('finish', resolve);
@@ -440,7 +445,7 @@ setInterval(() => {
     if (now - data.createdAt > 60 * 60 * 1000) {
       data.chunks.forEach(chunkPath => {
         if (chunkPath) {
-          try { fs.unlinkSync(chunkPath); } catch (e) {}
+          try { fs.unlinkSync(chunkPath); } catch (e) { }
         }
       });
       chunkUploads.delete(key);
@@ -458,7 +463,7 @@ router.get('/:id/files/:fileId/download', async (req, res) => {
     }
 
     const file = container.files.id(req.params.fileId);
-    
+
     if (!file) {
       return res.status(404).json({ error: 'File not found' });
     }
@@ -490,7 +495,7 @@ router.delete('/:id/files/:fileId', async (req, res) => {
     }
 
     const file = container.files.id(req.params.fileId);
-    
+
     if (!file) {
       return res.status(404).json({ error: 'File not found' });
     }
@@ -571,7 +576,7 @@ router.post('/:id/messages', async (req, res) => {
     await container.save();
 
     const addedMessage = container.messages[container.messages.length - 1];
-    
+
     const messageData = {
       id: addedMessage._id,
       sender: addedMessage.sender,
@@ -611,7 +616,7 @@ router.post('/:id/messages/image', upload.single('image'), async (req, res) => {
 
     // Return the URL to access the image
     const imageUrl = `/api/containers/${req.params.id}/uploads/${req.file.filename}`;
-    
+
     res.status(201).json({ imageUrl });
   } catch (error) {
     console.error('Image upload error:', error);
@@ -626,7 +631,7 @@ router.post('/:id/messages/image', upload.single('image'), async (req, res) => {
 router.get('/:id/uploads/:filename', async (req, res) => {
   try {
     const filePath = path.join(__dirname, '..', 'uploads', req.params.filename);
-    
+
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'File not found' });
     }
