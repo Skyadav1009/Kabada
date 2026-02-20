@@ -15,13 +15,22 @@ export interface Message {
   createdAt: number;
 }
 
+export interface Clipboard {
+  id: string;
+  name: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Container {
   id: string;
   name: string;
   passwordHash: string; // In a real app, hash this. Here we simulate it.
+  clipboards: Clipboard[];
   files: FileMeta[];
   messages: Message[];
-  textContent: string;
+  textContent: string; // legacy global text
   maxViews: number;
   currentViews: number;
   deleted?: boolean;

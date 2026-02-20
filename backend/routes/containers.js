@@ -199,7 +199,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Update text content
+// Update text content (legacy global text)
 router.put('/:id/text', async (req, res) => {
   try {
     const { text } = req.body;
@@ -217,6 +217,115 @@ router.put('/:id/text', async (req, res) => {
   } catch (error) {
     console.error('Update text error:', error);
     res.status(500).json({ error: 'Failed to update text' });
+  }
+});
+
+// --- CLIPBOARDS ROUTES ---
+
+// Get all clipboards
+router.get('/:id/clipboards', async (req, res) => {
+  try {
+    const container = await Container.findById(req.params.id);
+    if (!container) return res.status(404).json({ error: 'Container not found' });
+
+    // Auto-migrate legacy text to a clipboard if clipboards array is empty but legacy text exists
+    if (container.clipboards.length === 0 && container.textContent && container.textContent.trim() !== '') {
+      container.clipboards.push({
+        name: 'Legacy Clipboard',
+        content: container.textContent
+      });
+      container.textContent = ''; // clear legacy text
+      await container.save();
+    }
+
+    res.json(container.toSafeObject().clipboards);
+  } catch (error) {
+    console.error('Get clipboards error:', error);
+    res.status(500).json({ error: 'Failed to get clipboards' });
+  }
+});
+
+// Create a new clipboard
+router.post('/:id/clipboards', async (req, res) => {
+  try {
+    const { name, content } = req.body;
+    const container = await Container.findById(req.params.id);
+
+    if (!container) return res.status(404).json({ error: 'Container not found' });
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Clipboard name is required' });
+
+    // Check if clipboard name exists
+    if (container.clipboards.some(c => c.name.toLowerCase() === name.trim().toLowerCase())) {
+      return res.status(409).json({ error: 'Clipboard name already exists' });
+    }
+
+    container.clipboards.push({
+      name: name.trim(),
+      content: content || ''
+    });
+
+    container.lastAccessed = new Date();
+    await container.save();
+
+    res.status(201).json(container.toSafeObject().clipboards.pop()); // Return the newly created clipboard
+  } catch (error) {
+    console.error('Create clipboard error:', error);
+    res.status(500).json({ error: 'Failed to create clipboard' });
+  }
+});
+
+// Update a clipboard (name or content)
+router.put('/:id/clipboards/:clipboardId', async (req, res) => {
+  try {
+    const { name, content } = req.body;
+    const container = await Container.findById(req.params.id);
+
+    if (!container) return res.status(404).json({ error: 'Container not found' });
+
+    const clipboard = container.clipboards.id(req.params.clipboardId);
+    if (!clipboard) return res.status(404).json({ error: 'Clipboard not found' });
+
+    // Enforce unique name on update if name is changing
+    if (name && name.trim().toLowerCase() !== clipboard.name.toLowerCase()) {
+      if (container.clipboards.some(c => c.name.toLowerCase() === name.trim().toLowerCase())) {
+        return res.status(409).json({ error: 'Clipboard name already exists' });
+      }
+      clipboard.name = name.trim();
+    }
+
+    if (content !== undefined) {
+      clipboard.content = content;
+    }
+
+    clipboard.updatedAt = new Date();
+    container.lastAccessed = new Date();
+
+    await container.save();
+
+    res.json({ success: true, clipboard: container.toSafeObject().clipboards.find(c => c.id.toString() === req.params.clipboardId) });
+  } catch (error) {
+    console.error('Update clipboard error:', error);
+    res.status(500).json({ error: 'Failed to update clipboard' });
+  }
+});
+
+// Delete a clipboard
+router.delete('/:id/clipboards/:clipboardId', async (req, res) => {
+  try {
+    const container = await Container.findById(req.params.id);
+    if (!container) return res.status(404).json({ error: 'Container not found' });
+
+    const clipboard = container.clipboards.id(req.params.clipboardId);
+    if (!clipboard) return res.status(404).json({ error: 'Clipboard not found' });
+
+    container.clipboards.pull(req.params.clipboardId);
+    container.lastAccessed = new Date();
+    await container.save();
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete clipboard error:', error);
+    res.status(500).json({ error: 'Failed to delete clipboard' });
   }
 });
 

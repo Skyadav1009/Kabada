@@ -1,16 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Container, FileMeta, Message } from '../types';
-import { updateContainerText, addFileToContainer, addFilesToContainer, addFileWithProgress, removeFileFromContainer, getFileDownloadUrl, getDownloadAllUrl, sendMessage, uploadChatImage, getUploadedImageUrl } from '../services/storageService';
+import { Container, FileMeta, Message, Clipboard } from '../types';
+import { updateContainerText, addFileToContainer, addFilesToContainer, addFileWithProgress, removeFileFromContainer, getFileDownloadUrl, getDownloadAllUrl, sendMessage, uploadChatImage, getUploadedImageUrl, createClipboard, updateClipboard, deleteClipboard } from '../services/storageService';
 import Button from './Button';
 import { useToast } from './Toast';
 import ShareModal from './ShareModal';
-import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown } from 'lucide-react';
+import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown, Search, Plus } from 'lucide-react';
 
 // Socket.IO server URL (matches API_BASE without /api)
-const SOCKET_URL = window.location.hostname === 'localhost'
-  ? 'http://localhost:5000'
-  : 'https://quickshare-1-9gjk.onrender.com';
+const SOCKET_URL = 'https://quickshare-1-9gjk.onrender.com';
 
 interface ContainerViewProps {
   container: Container;
@@ -21,9 +19,16 @@ interface ContainerViewProps {
 const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContainer, onClose }) => {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<'files' | 'text' | 'chat'>('files');
-  const [text, setText] = useState(container.textContent);
+  const [text, setText] = useState('');
   const [isSavingText, setIsSavingText] = useState(false);
   const [textSaved, setTextSaved] = useState(false);
+
+  // Clipboard states
+  const [clipboards, setClipboards] = useState<Clipboard[]>([]);
+  const [selectedClipboardId, setSelectedClipboardId] = useState<string | null>(null);
+  const [clipboardSearchQuery, setClipboardSearchQuery] = useState('');
+  const [newClipboardName, setNewClipboardName] = useState('');
+  const [isCreatingClipboard, setIsCreatingClipboard] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
   const [uploadPercent, setUploadPercent] = useState<number>(0);
@@ -47,9 +52,43 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
 
   // Sync text and messages when container changes
   useEffect(() => {
-    setText(container.textContent);
+    let currentClipboards = container.clipboards || [];
+    if (currentClipboards.length === 0 && container.textContent) {
+      currentClipboards = [{
+        id: 'legacy',
+        name: 'Shared Clipboard',
+        content: container.textContent,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      }];
+    }
+    setClipboards(currentClipboards);
     setMessages(container.messages || []);
-  }, [container.textContent, container.messages]);
+
+    // Auto-select first clipboard if none selected
+    if (!selectedClipboardId && currentClipboards.length > 0) {
+      setSelectedClipboardId(currentClipboards[0].id);
+      setText(currentClipboards[0].content);
+    } else if (selectedClipboardId) {
+      // If the selected clipboard's content updated from another client, we might want to update local text,
+      // but to avoid overwriting typed content randomly, we assume the user saves manually.
+      // We will only update if somehow the container was completely refreshed.
+      const cb = currentClipboards.find(c => c.id === selectedClipboardId);
+      if (cb && !text) {
+        setText(cb.content);
+      }
+    }
+  }, [container.clipboards, container.textContent, container.messages]);
+
+  const handleSelectClipboard = (id: string) => {
+    setSelectedClipboardId(id);
+    const cb = clipboards.find(c => c.id === id);
+    if (cb) {
+      setText(cb.content);
+    } else {
+      setText('');
+    }
+  };
 
   // Socket.IO connection for real-time chat
   useEffect(() => {
@@ -88,9 +127,15 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
 
   // Manual save text function
   const handleSaveText = async () => {
+    if (!selectedClipboardId) return;
+
     setIsSavingText(true);
     try {
-      await updateContainerText(container.id, text);
+      if (selectedClipboardId === 'legacy') {
+        await updateContainerText(container.id, text);
+      } else {
+        await updateClipboard(container.id, selectedClipboardId, { content: text });
+      }
       setTextSaved(true);
       setTimeout(() => setTextSaved(false), 2000);
       toast.success('Text saved successfully');
@@ -99,6 +144,44 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
       toast.error('Failed to save text');
     } finally {
       setIsSavingText(false);
+    }
+  };
+
+  const handleCreateClipboard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClipboardName.trim()) return;
+
+    setIsCreatingClipboard(true);
+    try {
+      const newCb = await createClipboard(container.id, newClipboardName);
+      setNewClipboardName('');
+      toast.success('Clipboard created');
+      await refreshContainer();
+      handleSelectClipboard(newCb.id);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to create clipboard');
+    } finally {
+      setIsCreatingClipboard(false);
+    }
+  };
+
+  const handleDeleteClipboard = async (clipboardId: string) => {
+    if (clipboardId === 'legacy') {
+      toast.error("Select save on the legacy clipboard to migrate it, or clear text and save.");
+      return;
+    }
+    if (confirm('Are you sure you want to delete this clipboard?')) {
+      try {
+        await deleteClipboard(container.id, clipboardId);
+        toast.success('Clipboard deleted');
+        if (selectedClipboardId === clipboardId) {
+          setSelectedClipboardId(null);
+          setText('');
+        }
+        refreshContainer();
+      } catch (error) {
+        toast.error('Failed to delete clipboard');
+      }
     }
   };
 
@@ -357,6 +440,11 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
     return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
   };
 
+  const filteredClipboards = clipboards.filter(cb =>
+    cb.name.toLowerCase().includes(clipboardSearchQuery.toLowerCase())
+  );
+  const selectedClipboardInfo = clipboards.find(c => c.id === selectedClipboardId);
+
   return (
     <div className="max-w-5xl mx-auto px-2 sm:px-4 py-4 sm:py-8">
       <div className="bg-zinc-900 rounded-lg shadow-xl shadow-black/30 border border-zinc-800 overflow-hidden min-h-[500px] sm:min-h-[600px] flex flex-col">
@@ -390,8 +478,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
             <button
               onClick={() => setActiveTab('files')}
               className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm ${activeTab === 'files'
-                  ? 'border-amber-500 text-amber-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
+                ? 'border-amber-500 text-amber-400'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
                 }`}
             >
               Files ({container.files.length})
@@ -399,8 +487,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
             <button
               onClick={() => setActiveTab('text')}
               className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm ${activeTab === 'text'
-                  ? 'border-amber-500 text-amber-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
+                ? 'border-amber-500 text-amber-400'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
                 }`}
             >
               Text
@@ -408,8 +496,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
             <button
               onClick={() => setActiveTab('chat')}
               className={`w-1/3 py-2 sm:py-4 px-1 text-center border-b-2 font-medium text-xs sm:text-sm flex items-center justify-center gap-1 ${activeTab === 'chat'
-                  ? 'border-amber-500 text-amber-400'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
+                ? 'border-amber-500 text-amber-400'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
                 }`}
             >
               <MessageCircle className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -490,8 +578,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
               {container.files.length === 0 ? (
                 <div
                   className={`text-center py-8 sm:py-12 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${isDragging
-                      ? 'border-amber-500 bg-amber-500/10'
-                      : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-900/50'
+                    ? 'border-amber-500 bg-amber-500/10'
+                    : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-900/50'
                     }`}
                   onClick={() => fileInputRef.current?.click()}
                 >
@@ -568,53 +656,139 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
           )}
 
           {activeTab === 'text' && (
-            <div className="h-full flex flex-col space-y-3 sm:space-y-4">
-              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-0">
-                <div className="flex items-center space-x-2">
-                  <h3 className="text-base sm:text-lg font-medium text-white">Shared Clipboard</h3>
-                  {textSaved && (
-                    <span className="text-xs text-emerald-400 flex items-center">
-                      <Check className="h-3 w-3 mr-1" /> Saved!
-                    </span>
-                  )}
+            <div className="h-full flex flex-col sm:flex-row gap-4">
+              {/* Sidebar for Clipboards */}
+              <div className="w-full sm:w-1/3 md:w-1/4 bg-zinc-900 border border-zinc-700 rounded-lg flex flex-col overflow-hidden shadow-inner h-[250px] sm:h-auto">
+                <div className="p-3 border-b border-zinc-700 bg-zinc-800/50">
+                  <div className="relative mb-3">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-500" />
+                    <input
+                      type="text"
+                      placeholder="Search clipboards..."
+                      value={clipboardSearchQuery}
+                      onChange={(e) => setClipboardSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-zinc-950 border border-zinc-700 rounded-md text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                  <form onSubmit={handleCreateClipboard} className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="New clipboard name"
+                      value={newClipboardName}
+                      onChange={(e) => setNewClipboardName(e.target.value)}
+                      className="flex-1 min-w-0 px-3 py-1.5 bg-zinc-950 border border-zinc-700 rounded-md text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isCreatingClipboard || !newClipboardName.trim()}
+                      className="p-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 rounded-md hover:from-amber-500 hover:to-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                      title="Create Clipboard"
+                    >
+                      <Plus className="h-5 w-5" />
+                    </button>
+                  </form>
                 </div>
-                <div className="flex space-x-2">
-                  <Button
-                    variant="primary"
-                    onClick={handleSaveText}
-                    disabled={isSavingText}
-                    className="flex items-center text-sm flex-1 sm:flex-none justify-center"
-                  >
-                    {isSavingText ? (
-                      <RefreshCw className="h-4 w-4 mr-1 sm:mr-2 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4 mr-1 sm:mr-2" />
-                    )}
-                    {isSavingText ? 'Saving...' : 'Save'}
-                  </Button>
-                  <Button variant="ghost" onClick={handleCopyText} title="Copy to local clipboard" className="flex-1 sm:flex-none justify-center">
-                    {textCopied ? (
-                      <Check className="h-4 w-4 mr-1 sm:mr-2 text-emerald-400" />
-                    ) : (
-                      <Copy className="h-4 w-4 mr-1 sm:mr-2" />
-                    )}
-                    {textCopied ? 'Copied!' : 'Copy'}
-                  </Button>
+
+                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                  {filteredClipboards.length === 0 ? (
+                    <div className="text-center p-4 text-zinc-500 text-sm">
+                      {clipboardSearchQuery ? 'No clipboards found.' : 'No clipboards yet.'}
+                    </div>
+                  ) : (
+                    filteredClipboards.map(clipboard => (
+                      <div
+                        key={clipboard.id}
+                        onClick={() => handleSelectClipboard(clipboard.id)}
+                        className={`group flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${selectedClipboardId === clipboard.id
+                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                          : 'text-zinc-300 hover:bg-zinc-800 border border-transparent'
+                          }`}
+                      >
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <FileText className={`h-4 w-4 flex-shrink-0 ${selectedClipboardId === clipboard.id ? 'text-amber-500' : 'text-zinc-500'}`} />
+                          <span className="truncate text-sm font-medium">{clipboard.name}</span>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteClipboard(clipboard.id);
+                          }}
+                          className={`p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-700/80 transition-colors ${selectedClipboardId === clipboard.id ? 'opacity-100' : 'opacity-0 xl:group-hover:opacity-100'
+                            }`}
+                          title="Delete clipboard"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              <div className="flex-1 relative">
-                <textarea
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  className="w-full h-full p-3 sm:p-4 border border-zinc-700 rounded-lg bg-zinc-800 text-white placeholder-zinc-500 focus:ring-amber-500 focus:border-amber-500 resize-none font-mono text-sm"
-                  placeholder="Type or paste text here to share..."
-                  style={{ minHeight: '220px' }}
-                />
-                <div className="mt-2 flex justify-between text-xs text-zinc-500">
-                  <span>{text.length} characters</span>
-                  <span>{text.trim() ? text.trim().split(/\s+/).length : 0} words</span>
-                </div>
+              {/* Main Content Area */}
+              <div className="flex-1 flex flex-col space-y-3 sm:space-y-4">
+                {selectedClipboardId ? (
+                  <>
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-0 bg-zinc-900/50 p-3 rounded-lg border border-zinc-800/50">
+                      <div className="flex items-center space-x-2">
+                        <h3 className="text-base sm:text-lg font-medium text-white flex items-center gap-2">
+                          <span className="text-amber-500">📝</span>
+                          {selectedClipboardInfo?.name || 'Clipboard'}
+                        </h3>
+                        {textSaved && (
+                          <span className="text-xs text-emerald-400 font-medium flex items-center bg-emerald-400/10 px-2.5 py-1 rounded-full border border-emerald-400/20">
+                            <Check className="h-3 w-3 mr-1" /> Saved
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex space-x-2">
+                        <Button
+                          variant="primary"
+                          onClick={handleSaveText}
+                          disabled={isSavingText}
+                          className="flex items-center text-sm flex-1 sm:flex-none justify-center h-9 sm:h-10"
+                        >
+                          {isSavingText ? (
+                            <RefreshCw className="h-4 w-4 mr-1 sm:mr-2 animate-spin" />
+                          ) : (
+                            <Save className="h-4 w-4 mr-1 sm:mr-2" />
+                          )}
+                          {isSavingText ? 'Saving...' : 'Save'}
+                        </Button>
+                        <Button variant="ghost" onClick={handleCopyText} title="Copy to local clipboard" className="flex-1 sm:flex-none justify-center h-9 sm:h-10 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700">
+                          {textCopied ? (
+                            <Check className="h-4 w-4 mr-1 sm:mr-2 text-emerald-400" />
+                          ) : (
+                            <Copy className="h-4 w-4 mr-1 sm:mr-2 text-zinc-300" />
+                          )}
+                          <span className={textCopied ? 'text-emerald-400' : 'text-zinc-300'}>{textCopied ? 'Copied!' : 'Copy'}</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 relative">
+                      <textarea
+                        value={text}
+                        onChange={(e) => setText(e.target.value)}
+                        className="w-full h-full p-4 border border-zinc-700 rounded-lg bg-zinc-900/80 text-zinc-100 placeholder-zinc-500 focus:ring-1 focus:ring-amber-500 focus:border-amber-500 resize-none font-mono text-sm shadow-inner"
+                        placeholder="Type or paste text here to share..."
+                        style={{ minHeight: '300px' }}
+                      />
+                      <div className="absolute bottom-3 right-3 flex justify-between text-xs text-zinc-400 bg-zinc-950/80 px-2 py-1 rounded backdrop-blur border border-zinc-800 shadow-sm pointer-events-none">
+                        <span className="mr-3">{text.length} chars</span>
+                        <span>{text.trim() ? text.trim().split(/\s+/).length : 0} words</span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center p-8 border-2 border-dashed border-zinc-700 rounded-lg bg-zinc-900/30">
+                    <FileText className="h-16 w-16 text-zinc-600 mb-4" />
+                    <h3 className="text-zinc-300 font-medium text-lg">No Clipboard Selected</h3>
+                    <p className="text-zinc-500 text-sm mt-2 text-center max-w-sm">
+                      Select a clipboard from the sidebar or create a new one to start saving text snippets.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -628,8 +802,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                   <button
                     onClick={() => setChatRole('owner')}
                     className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium ${chatRole === 'owner'
-                        ? 'bg-amber-500 text-zinc-900'
-                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                      ? 'bg-amber-500 text-zinc-900'
+                      : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
                       }`}
                   >
                     Owner
@@ -637,8 +811,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                   <button
                     onClick={() => setChatRole('visitor')}
                     className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium ${chatRole === 'visitor'
-                        ? 'bg-amber-500 text-zinc-900'
-                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                      ? 'bg-amber-500 text-zinc-900'
+                      : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
                       }`}
                   >
                     Visitor
@@ -661,8 +835,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                     >
                       <div
                         className={`max-w-[85%] sm:max-w-[70%] rounded-lg px-3 sm:px-4 py-2 ${msg.sender === 'owner'
-                            ? 'bg-zinc-700 text-zinc-200'
-                            : 'bg-gradient-to-r from-amber-500 to-yellow-500 text-zinc-900'
+                          ? 'bg-zinc-700 text-zinc-200'
+                          : 'bg-gradient-to-r from-amber-500 to-yellow-500 text-zinc-900'
                           }`}
                       >
                         <div className="text-xs opacity-70 mb-1">
@@ -741,8 +915,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                   onClick={handleSendMessage}
                   disabled={isSendingMessage || (!chatMessage.trim() && !pastedImage)}
                   className={`px-3 sm:px-4 py-2 rounded-lg flex items-center justify-center flex-shrink-0 ${isSendingMessage || (!chatMessage.trim() && !pastedImage)
-                      ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 hover:from-amber-500 hover:to-yellow-600 active:from-amber-600 active:to-yellow-700'
+                    ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 hover:from-amber-500 hover:to-yellow-600 active:from-amber-600 active:to-yellow-700'
                     }`}
                 >
                   {isSendingMessage ? (

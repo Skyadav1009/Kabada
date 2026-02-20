@@ -1,8 +1,6 @@
-import { Container, ContainerSummary, FileMeta, Message } from '../types';
+import { Container, ContainerSummary, FileMeta, Message, Clipboard } from '../types';
 
 const API_BASE = 'https://quickshare-1-9gjk.onrender.com/api';
-
-// const API_BASE = 'http://localhost:5000/api';
 
 
 
@@ -93,11 +91,46 @@ export const unlockContainer = async (id: string, password: string): Promise<Con
   }
 };
 
-// Update text content
+// Update text content (legacy)
 export const updateContainerText = async (id: string, text: string): Promise<void> => {
   await apiRequest<{ success: boolean }>(`/containers/${id}/text`, {
     method: 'PUT',
     body: JSON.stringify({ text }),
+  });
+};
+
+// Clipboard APIs
+export const getClipboards = async (containerId: string): Promise<Clipboard[]> => {
+  const data = await apiRequest<Clipboard[]>(`/containers/${containerId}/clipboards`);
+  return data;
+};
+
+export const createClipboard = async (containerId: string, name: string): Promise<Clipboard> => {
+  const data = await apiRequest<Clipboard>(`/containers/${containerId}/clipboards`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  return data;
+};
+
+export const updateClipboard = async (
+  containerId: string,
+  clipboardId: string,
+  updates: { name?: string; content?: string }
+): Promise<Clipboard> => {
+  const data = await apiRequest<{ success: boolean; clipboard: Clipboard }>(
+    `/containers/${containerId}/clipboards/${clipboardId}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    }
+  );
+  return data.clipboard;
+};
+
+export const deleteClipboard = async (containerId: string, clipboardId: string): Promise<void> => {
+  await apiRequest<{ success: boolean }>(`/containers/${containerId}/clipboards/${clipboardId}`, {
+    method: 'DELETE',
   });
 };
 

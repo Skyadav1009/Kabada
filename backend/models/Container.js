@@ -13,14 +13,21 @@ const fileSchema = new mongoose.Schema({
 });
 
 const messageSchema = new mongoose.Schema({
-  sender: { 
-    type: String, 
-    enum: ['owner', 'visitor'], 
-    required: true 
+  sender: {
+    type: String,
+    enum: ['owner', 'visitor'],
+    required: true
   },
   text: { type: String, default: '' },
   imageUrl: { type: String, default: '' }, // For image messages
   createdAt: { type: Date, default: Date.now }
+});
+
+const clipboardSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  content: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
 
 const containerSchema = new mongoose.Schema({
@@ -38,6 +45,7 @@ const containerSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  clipboards: [clipboardSchema],
   files: [fileSchema],
   messages: [messageSchema],
   maxViews: {
@@ -59,10 +67,10 @@ const containerSchema = new mongoose.Schema({
 });
 
 // Hash password before saving
-containerSchema.pre('save', async function(next) {
+containerSchema.pre('save', async function (next) {
   // Only hash if password is modified (new container)
   if (!this.isModified('passwordHash')) return next();
-  
+
   try {
     const salt = await bcrypt.genSalt(10);
     this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
@@ -73,16 +81,23 @@ containerSchema.pre('save', async function(next) {
 });
 
 // Method to verify password
-containerSchema.methods.verifyPassword = async function(password) {
+containerSchema.methods.verifyPassword = async function (password) {
   return bcrypt.compare(password, this.passwordHash);
 };
 
 // Method to return safe container data (without password)
-containerSchema.methods.toSafeObject = function() {
+containerSchema.methods.toSafeObject = function () {
   return {
     id: this._id,
     name: this.name,
     textContent: this.textContent,
+    clipboards: this.clipboards.map(c => ({
+      id: c._id,
+      name: c.name,
+      content: c.content,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt
+    })),
     files: this.files.map(f => ({
       id: f._id,
       name: f.originalName,
@@ -105,7 +120,7 @@ containerSchema.methods.toSafeObject = function() {
 };
 
 // Static method to get summary (for search results)
-containerSchema.methods.toSummary = function() {
+containerSchema.methods.toSummary = function () {
   return {
     id: this._id,
     name: this.name,
