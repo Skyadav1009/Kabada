@@ -20,8 +20,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<'files' | 'text' | 'chat'>('files');
   const [text, setText] = useState('');
-  const [isSavingText, setIsSavingText] = useState(false);
   const [textSaved, setTextSaved] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   // Clipboard states
   const [clipboards, setClipboards] = useState<Clipboard[]>([]);
@@ -125,27 +125,43 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Manual save text function
-  const handleSaveText = async () => {
-    if (!selectedClipboardId) return;
 
-    setIsSavingText(true);
-    try {
-      if (selectedClipboardId === 'legacy') {
-        await updateContainerText(container.id, text);
-      } else {
-        await updateClipboard(container.id, selectedClipboardId, { content: text });
-      }
-      setTextSaved(true);
-      setTimeout(() => setTextSaved(false), 2000);
-      toast.success('Text saved successfully');
-      refreshContainer();
-    } catch (error) {
-      toast.error('Failed to save text');
-    } finally {
-      setIsSavingText(false);
+
+  // Auto-save logic
+  useEffect(() => {
+    // We do not want to auto-save immediately on mount or on select.
+    // Check if the current text actually differs from the selected clipboard.
+    const cb = clipboards.find(c => c.id === selectedClipboardId);
+    if (!selectedClipboardId || !cb || text === cb.content) {
+      return;
     }
-  };
+
+    setSaveStatus('saving');
+    const autoSaveTimer = setTimeout(async () => {
+      try {
+        if (selectedClipboardId === 'legacy') {
+          await updateContainerText(container.id, text);
+        } else {
+          // Update local clipboard array preemptively
+          setClipboards(prev => prev.map(c =>
+            c.id === selectedClipboardId ? { ...c, content: text } : c
+          ));
+          await updateClipboard(container.id, selectedClipboardId, { content: text });
+        }
+        setSaveStatus('saved');
+        setTextSaved(true);
+        setTimeout(() => {
+          setTextSaved(false);
+          setSaveStatus('idle');
+        }, 2000);
+      } catch (error) {
+        setSaveStatus('error');
+        console.error('Auto-save failed:', error);
+      }
+    }, 1000); // 1-second debounce
+
+    return () => clearTimeout(autoSaveTimer);
+  }, [text, selectedClipboardId, container.id]);
 
   const handleCreateClipboard = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -735,26 +751,23 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                           <span className="text-amber-500">📝</span>
                           {selectedClipboardInfo?.name || 'Clipboard'}
                         </h3>
-                        {textSaved && (
+                        {saveStatus === 'saving' && (
+                          <span className="text-xs text-amber-400 font-medium flex items-center bg-amber-400/10 px-2.5 py-1 rounded-full border border-amber-400/20">
+                            <RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Saving...
+                          </span>
+                        )}
+                        {saveStatus === 'saved' && (
                           <span className="text-xs text-emerald-400 font-medium flex items-center bg-emerald-400/10 px-2.5 py-1 rounded-full border border-emerald-400/20">
                             <Check className="h-3 w-3 mr-1" /> Saved
                           </span>
                         )}
+                        {saveStatus === 'error' && (
+                          <span className="text-xs text-red-400 font-medium flex items-center bg-red-400/10 px-2.5 py-1 rounded-full border border-red-400/20">
+                            Error saving
+                          </span>
+                        )}
                       </div>
                       <div className="flex space-x-2">
-                        <Button
-                          variant="primary"
-                          onClick={handleSaveText}
-                          disabled={isSavingText}
-                          className="flex items-center text-sm flex-1 sm:flex-none justify-center h-9 sm:h-10"
-                        >
-                          {isSavingText ? (
-                            <RefreshCw className="h-4 w-4 mr-1 sm:mr-2 animate-spin" />
-                          ) : (
-                            <Save className="h-4 w-4 mr-1 sm:mr-2" />
-                          )}
-                          {isSavingText ? 'Saving...' : 'Save'}
-                        </Button>
                         <Button variant="ghost" onClick={handleCopyText} title="Copy to local clipboard" className="flex-1 sm:flex-none justify-center h-9 sm:h-10 border border-zinc-700 bg-zinc-800 hover:bg-zinc-700">
                           {textCopied ? (
                             <Check className="h-4 w-4 mr-1 sm:mr-2 text-emerald-400" />
