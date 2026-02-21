@@ -776,6 +776,11 @@ router.get('/:id/files/:fileId/download', async (req, res) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
+    // Check if file has a valid path
+    if (!file.path) {
+      return res.status(404).json({ error: 'File data is corrupted or missing' });
+    }
+
     // For Cloudinary files, proxy the file to enforce correct filename and extension
     if (file.path.startsWith('http')) {
       const fetchAndPipe = (url) => {
