@@ -32,6 +32,15 @@ const saveLinks = () => {
   }
 };
 
+// Extract container ID from various input formats
+// Handles: "6999cc830cfc445bc2c94b30", "#/container/6999cc...", "https://example.com/#/container/6999cc..."
+const extractContainerId = (input) => {
+  if (!input) return null;
+  // Match 24-character hex string (MongoDB ObjectId)
+  const match = input.match(/([a-fA-F0-9]{24})/);
+  return match ? match[1] : null;
+};
+
 // Download file from URL and upload to Cloudinary
 const downloadAndUpload = async (url, filename, mimetype) => {
   return new Promise((resolve, reject) => {
@@ -232,8 +241,14 @@ const initDiscordBot = () => {
         }
 
         case 'link': {
-          const containerId = interaction.options.getString('container_id');
+          const rawContainerId = interaction.options.getString('container_id');
+          const containerId = extractContainerId(rawContainerId);
           const adminPassword = interaction.options.getString('admin_password');
+
+          if (!containerId) {
+            await interaction.reply({ content: '❌ Invalid container ID! Please provide a valid 24-character ID.', ephemeral: true });
+            return;
+          }
 
           const container = await Container.findById(containerId);
           if (!container) {
