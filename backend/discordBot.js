@@ -594,8 +594,13 @@ const initDiscordBot = () => {
         container.lastAccessed = new Date();
         await container.save();
 
-        await message.reactions.removeAll();
-        await message.react('✅');
+        // Try to update reactions (may fail without Manage Messages permission)
+        try {
+          await message.reactions.removeAll();
+          await message.react('✅');
+        } catch (e) {
+          // Silently ignore - bot may not have Manage Messages permission
+        }
 
         const embed = new EmbedBuilder()
           .setColor(0x22C55E)
@@ -605,8 +610,12 @@ const initDiscordBot = () => {
 
         await message.reply({ embeds: [embed] });
       } else {
-        await message.reactions.removeAll();
-        await message.react('❌');
+        try {
+          await message.reactions.removeAll();
+          await message.react('❌');
+        } catch (e) {
+          // Silently ignore
+        }
         await message.reply('❌ Failed to upload files');
       }
     } catch (error) {
