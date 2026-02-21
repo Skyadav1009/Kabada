@@ -15,8 +15,17 @@ const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/quickshare';
 const { initCronJobs } = require('./cron');
 
+// Environment validation
+const requiredEnvVars = ['MONGODB_URI'];
+const missingEnvVars = requiredEnvVars.filter(v => !process.env[v]);
+if (missingEnvVars.length > 0) {
+  console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));
+  process.exit(1);
+}
+
 // Debug: Print masked URI to verify it's being read correctly
 console.log('MongoDB URI loaded:', MONGODB_URI ? MONGODB_URI.replace(/:([^@]+)@/, ':****@') : 'NOT SET');
+console.log('Environment:', process.env.NODE_ENV || 'development');
 
 // Allowed origins for CORS
 const allowedOrigins = [
@@ -85,32 +94,100 @@ app.set('io', io);
 app.use('/api/containers', containerRoutes);
 app.use('/api/admin', adminRoutes);
 
-// Health check
+// Health check with database status
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  const dbState = mongoose.connection.readyState;
+  const dbStatus = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+  
+  res.json({
+    status: dbState === 1 ? 'ok' : 'degraded',
+    database: dbStatus[dbState] || 'unknown',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
 });
 
 // Serve uploaded files statically (optional, for direct access)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Connect to MongoDB and start server
-mongoose.connect(MONGODB_URI)
-  .then(() => {
+// MongoDB connection options
+const mongooseOptions = {
+  serverSelectionTimeoutMS: 30000,
+  socketTimeoutMS: 45000,
+  maxPoolSize: 10,
+  retryWrites: true,
+};
+
+// Connect to MongoDB with retry logic
+const MAX_RETRIES = 5;
+const RETRY_DELAY = 5000;
+
+async function connectWithRetry(retries = MAX_RETRIES) {
+  try {
+    await mongoose.connect(MONGODB_URI, mongooseOptions);
     console.log('✅ Connected to MongoDB');
+    
     server.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
       console.log('🔌 Socket.IO ready for real-time connections');
       initCronJobs();
     });
-  })
-  .catch((error) => {
-    console.error('❌ MongoDB connection error:', error);
-    process.exit(1);
-  });
+  } catch (error) {
+    console.error(`❌ MongoDB connection error (${MAX_RETRIES - retries + 1}/${MAX_RETRIES}):`, error.message);
+    
+    if (retries > 1) {
+      console.log(`⏳ Retrying in ${RETRY_DELAY / 1000} seconds...`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      return connectWithRetry(retries - 1);
+    } else {
+      console.error('❌ Failed to connect to MongoDB after maximum retries');
+      process.exit(1);
+    }
+  }
+}
+
+// Handle MongoDB connection events
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB connection error:', err.message);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB disconnected');
+});
+
+mongoose.connection.on('reconnected', () => {
+  console.log('✅ MongoDB reconnected');
+});
+
+// Start the server
+connectWithRetry();
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
+  console.log('\n🔄 Graceful shutdown initiated...');
   await mongoose.connection.close();
   console.log('MongoDB connection closed.');
   process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n🔄 SIGTERM received, shutting down gracefully...');
+  await mongoose.connection.close();
+  console.log('MongoDB connection closed.');
+  process.exit(0);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });

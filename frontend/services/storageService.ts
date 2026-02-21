@@ -1,34 +1,36 @@
 import { Container, ContainerSummary, FileMeta, Message, Clipboard } from '../types';
 
-const API_BASE = 'https://quickshare-1-9gjk.onrender.com/api';
+// Use environment variable for API base URL, fallback to production
+const API_BASE = import.meta.env.VITE_API_URL || 'https://quickshare-1-9gjk.onrender.com/api';
 
-// const API_BASE = 'http://localhost:5000/api'; // Use this for local development
-
-
-
-
-
-// Helper for API calls
+// Helper for API calls with improved error handling
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`;
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || 'Request failed');
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Request failed' }));
+      throw new Error(error.error || `Request failed with status ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Unable to connect to server. Please check your internet connection.');
+    }
+    throw error;
   }
-
-  return response.json();
 }
 
 // Create a new container
