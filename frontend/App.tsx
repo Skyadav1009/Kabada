@@ -498,7 +498,7 @@ const App: React.FC = () => {
                   )}
 
                   <div className="flex gap-4">
-                    <Button type="button" variant="secondary" onClick={() => setViewState(ViewState.HOME)} className="w-full">
+                    <Button type="button" variant="secondary" onClick={() => { setViewState(ViewState.HOME); updateHash(ViewState.HOME); }} className="w-full">
                       Cancel
                     </Button>
                     <Button type="submit" className="w-full">
@@ -578,7 +578,7 @@ const App: React.FC = () => {
                   )}
 
                   <div className="flex gap-4">
-                    <Button type="button" variant="secondary" onClick={() => setViewState(ViewState.HOME)} className="w-full">
+                    <Button type="button" variant="secondary" onClick={() => { setViewState(ViewState.HOME); updateHash(ViewState.HOME); }} className="w-full">
                       Cancel
                     </Button>
                     <Button type="submit" className="w-full">
