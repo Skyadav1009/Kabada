@@ -8,6 +8,7 @@ const { Server } = require('socket.io');
 
 const containerRoutes = require('./routes/containers');
 const adminRoutes = require('./routes/admin');
+const { initDiscordBot } = require('./discordBot');
 
 const app = express();
 const server = http.createServer(app);
@@ -136,6 +137,7 @@ async function connectWithRetry(retries = MAX_RETRIES) {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
       console.log('🔌 Socket.IO ready for real-time connections');
       initCronJobs();
+      initDiscordBot();
     });
   } catch (error) {
     console.error(`❌ MongoDB connection error (${MAX_RETRIES - retries + 1}/${MAX_RETRIES}):`, error.message);
