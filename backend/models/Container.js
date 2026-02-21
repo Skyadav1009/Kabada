@@ -56,6 +56,14 @@ const containerSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  readOnly: {
+    type: Boolean,
+    default: false
+  },
+  adminPasswordHash: {
+    type: String,
+    default: ''
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -66,14 +74,19 @@ const containerSchema = new mongoose.Schema({
   }
 });
 
-// Hash password before saving
+// Hash passwords before saving
 containerSchema.pre('save', async function (next) {
-  // Only hash if password is modified (new container)
-  if (!this.isModified('passwordHash')) return next();
-
   try {
     const salt = await bcrypt.genSalt(10);
-    this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
+
+    if (this.isModified('passwordHash')) {
+      this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
+    }
+
+    if (this.isModified('adminPasswordHash') && this.adminPasswordHash) {
+      this.adminPasswordHash = await bcrypt.hash(this.adminPasswordHash, salt);
+    }
+
     next();
   } catch (error) {
     next(error);
@@ -83,6 +96,12 @@ containerSchema.pre('save', async function (next) {
 // Method to verify password
 containerSchema.methods.verifyPassword = async function (password) {
   return bcrypt.compare(password, this.passwordHash);
+};
+
+// Method to verify admin password
+containerSchema.methods.verifyAdminPassword = async function (password) {
+  if (!this.adminPasswordHash) return false;
+  return bcrypt.compare(password, this.adminPasswordHash);
 };
 
 // Method to return safe container data (without password)
@@ -114,6 +133,7 @@ containerSchema.methods.toSafeObject = function () {
     })),
     maxViews: this.maxViews,
     currentViews: this.currentViews,
+    readOnly: this.readOnly,
     createdAt: this.createdAt,
     lastAccessed: this.lastAccessed
   };
@@ -128,6 +148,7 @@ containerSchema.methods.toSummary = function () {
     hasText: !!this.textContent,
     maxViews: this.maxViews,
     currentViews: this.currentViews,
+    readOnly: this.readOnly,
     createdAt: this.createdAt
   };
 };

@@ -27,6 +27,8 @@ const App: React.FC = () => {
   // Form States
   const [createName, setCreateName] = useState('');
   const [createPassword, setCreatePassword] = useState('');
+  const [createAdminPassword, setCreateAdminPassword] = useState('');
+  const [isReadOnly, setIsReadOnly] = useState(false);
   const [createMaxViews, setCreateMaxViews] = useState('');
   const [oneTimeOpen, setOneTimeOpen] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState('');
@@ -90,19 +92,27 @@ const App: React.FC = () => {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!createName || !createPassword) {
-      setErrorMsg("Name and password are required.");
+    if (!createName || !createPassword || (isReadOnly && !createAdminPassword)) {
+      setErrorMsg(isReadOnly ? "Name, Visitor Password, and Admin Password are required." : "Name and password are required.");
       return;
     }
     try {
       const maxViews = createMaxViews ? parseInt(createMaxViews, 10) : 0;
-      const newContainer = await createContainer(createName, createPassword, maxViews);
+      const newContainer = await createContainer(createName, createPassword, maxViews, isReadOnly, createAdminPassword);
+
+      // Store the admin password locally so the creator can immediately write to it
+      if (isReadOnly && createAdminPassword) {
+        sessionStorage.setItem(`admin-pass-${newContainer.id}`, createAdminPassword);
+      }
+
       setActiveContainer(newContainer);
       setViewState(ViewState.CONTAINER);
       updateHash(ViewState.CONTAINER, newContainer.id);
       toast.success('Container created!');
       setCreateName('');
       setCreatePassword('');
+      setCreateAdminPassword('');
+      setIsReadOnly(false);
       setCreateMaxViews('');
       setOneTimeOpen(false);
     } catch (err: any) {
@@ -118,6 +128,11 @@ const App: React.FC = () => {
     try {
       const container = await unlockContainer(selectedContainerId, unlockPassword);
       if (container) {
+        // If we successfully unlocked as admin, store the password in session storage for write requests
+        if (container.isAdmin) {
+          sessionStorage.setItem(`admin-pass-${container.id}`, unlockPassword);
+        }
+
         setActiveContainer(container);
         setViewState(ViewState.CONTAINER);
         updateHash(ViewState.CONTAINER, container.id);
@@ -141,6 +156,9 @@ const App: React.FC = () => {
   const refreshActiveContainer = async () => {
     if (activeContainer) {
       const updated = await getContainerById(activeContainer.id);
+      if (activeContainer.isAdmin) {
+        updated.isAdmin = true;
+      }
       setActiveContainer(updated);
     }
   };
@@ -343,7 +361,9 @@ const App: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300">Password</label>
+                    <label className="block text-sm font-medium text-zinc-300">
+                      {isReadOnly ? "Visitor Password" : "Password"}
+                    </label>
                     <div className="mt-1">
                       <input
                         type="password"
@@ -357,6 +377,46 @@ const App: React.FC = () => {
                   </div>
 
                   <div>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">Access Control</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsReadOnly(!isReadOnly)}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-all ${isReadOnly
+                        ? 'bg-amber-500/20 border-amber-500 text-amber-400'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                        }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Lock className="h-5 w-5" />
+                        <div className="text-left">
+                          <p className="font-medium text-sm">Read-Only Mode</p>
+                          <p className="text-xs opacity-70">Visitors can only view and download</p>
+                        </div>
+                      </div>
+                      <div className={`w-10 h-6 rounded-full transition-all flex items-center ${isReadOnly ? 'bg-amber-500 justify-end' : 'bg-zinc-600 justify-start'
+                        }`}>
+                        <div className="w-4 h-4 bg-white rounded-full mx-1"></div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {isReadOnly && (
+                    <div>
+                      <label className="block text-sm font-medium text-amber-500">Admin Password (For Uploading)</label>
+                      <div className="mt-1">
+                        <input
+                          type="password"
+                          required={isReadOnly}
+                          value={createAdminPassword}
+                          onChange={(e) => setCreateAdminPassword(e.target.value)}
+                          className="appearance-none block w-full px-3 py-2 border border-amber-500/50 rounded-md shadow-sm bg-amber-500/10 text-white placeholder-zinc-500 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm"
+                          placeholder="Admin Secret Password"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
                     <label className="block text-sm font-medium text-zinc-300 mb-2">Access Options</label>
                     <button
                       type="button"
@@ -366,8 +426,8 @@ const App: React.FC = () => {
                         else setCreateMaxViews('');
                       }}
                       className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-all ${oneTimeOpen
-                          ? 'bg-amber-500/20 border-amber-500 text-amber-400'
-                          : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                        ? 'bg-amber-500/20 border-amber-500 text-amber-400'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
                         }`}
                     >
                       <div className="flex items-center gap-3">
@@ -469,8 +529,10 @@ const App: React.FC = () => {
           {viewState === ViewState.CONTAINER && activeContainer && (
             <ContainerView
               container={activeContainer}
+              adminPassword={activeContainer.isAdmin ? sessionStorage.getItem(`admin-pass-${activeContainer.id}`) || undefined : undefined}
               refreshContainer={refreshActiveContainer}
               onClose={() => {
+                sessionStorage.removeItem(`admin-pass-${activeContainer.id}`);
                 setActiveContainer(null);
                 setViewState(ViewState.HOME);
                 updateHash(ViewState.HOME);

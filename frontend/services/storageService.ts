@@ -29,10 +29,22 @@ async function apiRequest<T>(
 }
 
 // Create a new container
-export const createContainer = async (name: string, password: string, maxViews?: number): Promise<Container> => {
+export const createContainer = async (
+  name: string,
+  password: string,
+  maxViews?: number,
+  isReadOnly?: boolean,
+  adminPassword?: string
+): Promise<Container> => {
   const data = await apiRequest<Container>('/containers', {
     method: 'POST',
-    body: JSON.stringify({ name, password, maxViews: maxViews || 0 }),
+    body: JSON.stringify({
+      name,
+      password,
+      maxViews: maxViews || 0,
+      isReadOnly,
+      adminPassword
+    }),
   });
 
   return data;
@@ -105,9 +117,17 @@ export const getClipboards = async (containerId: string): Promise<Clipboard[]> =
   return data;
 };
 
-export const createClipboard = async (containerId: string, name: string): Promise<Clipboard> => {
+export const createClipboard = async (
+  containerId: string,
+  name: string,
+  adminPassword?: string
+): Promise<Clipboard> => {
+  const headers: Record<string, string> = {};
+  if (adminPassword) headers['x-admin-password'] = adminPassword;
+
   const data = await apiRequest<Clipboard>(`/containers/${containerId}/clipboards`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({ name }),
   });
   return data;
@@ -116,28 +136,46 @@ export const createClipboard = async (containerId: string, name: string): Promis
 export const updateClipboard = async (
   containerId: string,
   clipboardId: string,
-  updates: { name?: string; content?: string }
+  updates: { name?: string; content?: string },
+  adminPassword?: string
 ): Promise<Clipboard> => {
+  const headers: Record<string, string> = {};
+  if (adminPassword) headers['x-admin-password'] = adminPassword;
+
   const data = await apiRequest<{ success: boolean; clipboard: Clipboard }>(
     `/containers/${containerId}/clipboards/${clipboardId}`,
     {
       method: 'PUT',
+      headers,
       body: JSON.stringify(updates),
     }
   );
   return data.clipboard;
 };
 
-export const deleteClipboard = async (containerId: string, clipboardId: string): Promise<void> => {
+export const deleteClipboard = async (
+  containerId: string,
+  clipboardId: string,
+  adminPassword?: string
+): Promise<void> => {
+  const headers: Record<string, string> = {};
+  if (adminPassword) headers['x-admin-password'] = adminPassword;
+
   await apiRequest<{ success: boolean }>(`/containers/${containerId}/clipboards/${clipboardId}`, {
     method: 'DELETE',
+    headers,
   });
 };
 
 // Add file to container
-export const addFileToContainer = async (id: string, file: File): Promise<FileMeta> => {
+export const addFileToContainer = async (
+  id: string,
+  file: File,
+  adminPassword?: string
+): Promise<FileMeta> => {
   const formData = new FormData();
   formData.append('file', file);
+  if (adminPassword) formData.append('x-admin-password', adminPassword);
 
   const response = await fetch(`${API_BASE}/containers/${id}/files`, {
     method: 'POST',
@@ -153,9 +191,14 @@ export const addFileToContainer = async (id: string, file: File): Promise<FileMe
 };
 
 // Add multiple files to container
-export const addFilesToContainer = async (id: string, files: File[]): Promise<FileMeta[]> => {
+export const addFilesToContainer = async (
+  id: string,
+  files: File[],
+  adminPassword?: string
+): Promise<FileMeta[]> => {
   const formData = new FormData();
   files.forEach(file => formData.append('files', file));
+  if (adminPassword) formData.append('x-admin-password', adminPassword);
 
   const response = await fetch(`${API_BASE}/containers/${id}/files/multiple`, {
     method: 'POST',
@@ -175,7 +218,8 @@ export const addFilesToContainer = async (id: string, files: File[]): Promise<Fi
 export const addFileWithProgress = async (
   id: string,
   file: File,
-  onProgress: (percent: number) => void
+  onProgress: (percent: number) => void,
+  adminPassword?: string
 ): Promise<FileMeta> => {
   const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -185,6 +229,8 @@ export const addFileWithProgress = async (
   if (totalChunks <= 1) {
     const formData = new FormData();
     formData.append('file', file);
+    if (adminPassword) formData.append('x-admin-password', adminPassword);
+
     const response = await fetch(`${API_BASE}/containers/${id}/files`, {
       method: 'POST',
       body: formData,
@@ -211,6 +257,7 @@ export const addFileWithProgress = async (
     formData.append('filename', file.name);
     formData.append('fileType', file.type);
     formData.append('fileSize', file.size.toString());
+    if (adminPassword) formData.append('x-admin-password', adminPassword);
 
     const response = await fetch(`${API_BASE}/containers/${id}/files/chunk`, {
       method: 'POST',
@@ -235,9 +282,17 @@ export const addFileWithProgress = async (
 };
 
 // Remove file from container
-export const removeFileFromContainer = async (containerId: string, fileId: string): Promise<void> => {
+export const removeFileFromContainer = async (
+  containerId: string,
+  fileId: string,
+  adminPassword?: string
+): Promise<void> => {
+  const headers: Record<string, string> = {};
+  if (adminPassword) headers['x-admin-password'] = adminPassword;
+
   await apiRequest<{ success: boolean }>(`/containers/${containerId}/files/${fileId}`, {
     method: 'DELETE',
+    headers,
   });
 };
 

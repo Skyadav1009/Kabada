@@ -58,10 +58,15 @@ const uploadMultiple = multer({
 // Create a new container
 router.post('/', async (req, res) => {
   try {
-    const { name, password, maxViews } = req.body;
+    const { name, password, maxViews, isReadOnly, adminPassword } = req.body;
 
     if (!name || !password) {
       return res.status(400).json({ error: 'Name and password are required' });
+    }
+
+    // If readOnly is true, adminPassword is required
+    if (isReadOnly && !adminPassword) {
+      return res.status(400).json({ error: 'Admin password is required when Read-Only mode is enabled' });
     }
 
     // Check if container name already exists (case-insensitive)
@@ -76,11 +81,19 @@ router.post('/', async (req, res) => {
     const container = new Container({
       name,
       passwordHash: password, // Will be hashed by pre-save middleware
+      adminPasswordHash: isReadOnly ? adminPassword : '', // Will be hashed by pre-save
+      readOnly: !!isReadOnly,
       maxViews: maxViews ? parseInt(maxViews, 10) : 0 // 0 = unlimited
     });
 
     await container.save();
-    res.status(201).json(container.toSafeObject());
+
+    const safeContainer = container.toSafeObject();
+    if (isReadOnly) {
+      safeContainer.isAdmin = true;
+    }
+
+    res.status(201).json(safeContainer);
   } catch (error) {
     console.error('Create container error:', error);
     res.status(500).json({ error: 'Failed to create container' });
@@ -133,11 +146,24 @@ router.post('/:id/verify', async (req, res) => {
       return res.status(404).json({ error: 'Container not found' });
     }
 
-    const isValid = await container.verifyPassword(password);
+    let isValid = await container.verifyPassword(password);
+    let isAdmin = false;
+
+    // If regular password fails and it's a read-only container, check admin password
+    if (!isValid && container.readOnly) {
+      isValid = await container.verifyAdminPassword(password);
+      if (isValid) {
+        isAdmin = true;
+      }
+    }
 
     if (!isValid) {
       return res.status(401).json({ error: 'Incorrect password' });
     }
+
+    // Return the safe object with an extra isAdmin flag
+    const safeContainer = container.toSafeObject();
+    safeContainer.isAdmin = isAdmin;
 
     // Increment view count
     container.currentViews += 1;
@@ -161,17 +187,16 @@ router.post('/:id/verify', async (req, res) => {
       }
 
       // Return the container data before deleting
-      const safeData = container.toSafeObject();
-      safeData.deleted = true;
-      safeData.message = 'This container has reached its view limit and will be deleted.';
+      safeContainer.deleted = true;
+      safeContainer.message = 'This container has reached its view limit and will be deleted.';
 
       // Delete container from database
       await Container.findByIdAndDelete(req.params.id);
 
-      return res.json(safeData);
+      return res.json(safeContainer);
     }
 
-    res.json(container.toSafeObject());
+    res.json(safeContainer);
   } catch (error) {
     console.error('Verify error:', error);
     res.status(500).json({ error: 'Verification failed' });
@@ -249,9 +274,19 @@ router.get('/:id/clipboards', async (req, res) => {
 router.post('/:id/clipboards', async (req, res) => {
   try {
     const { name, content } = req.body;
+    const adminPassword = req.headers['x-admin-password'];
     const container = await Container.findById(req.params.id);
 
     if (!container) return res.status(404).json({ error: 'Container not found' });
+
+    // Check read-only access (Admin required)
+    if (container.readOnly) {
+      const isAdmin = await container.verifyAdminPassword(adminPassword);
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Admin access required to modify a read-only container' });
+      }
+    }
+
     if (!name || !name.trim()) return res.status(400).json({ error: 'Clipboard name is required' });
 
     // Check if clipboard name exists
@@ -278,9 +313,18 @@ router.post('/:id/clipboards', async (req, res) => {
 router.put('/:id/clipboards/:clipboardId', async (req, res) => {
   try {
     const { name, content } = req.body;
+    const adminPassword = req.headers['x-admin-password'];
     const container = await Container.findById(req.params.id);
 
     if (!container) return res.status(404).json({ error: 'Container not found' });
+
+    // Check read-only access (Admin required)
+    if (container.readOnly) {
+      const isAdmin = await container.verifyAdminPassword(adminPassword);
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Admin access required to modify a read-only container' });
+      }
+    }
 
     const clipboard = container.clipboards.id(req.params.clipboardId);
     if (!clipboard) return res.status(404).json({ error: 'Clipboard not found' });
@@ -312,8 +356,17 @@ router.put('/:id/clipboards/:clipboardId', async (req, res) => {
 // Delete a clipboard
 router.delete('/:id/clipboards/:clipboardId', async (req, res) => {
   try {
+    const adminPassword = req.headers['x-admin-password'];
     const container = await Container.findById(req.params.id);
     if (!container) return res.status(404).json({ error: 'Container not found' });
+
+    // Check read-only access (Admin required)
+    if (container.readOnly) {
+      const isAdmin = await container.verifyAdminPassword(adminPassword);
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Admin access required to modify a read-only container' });
+      }
+    }
 
     const clipboard = container.clipboards.id(req.params.clipboardId);
     if (!clipboard) return res.status(404).json({ error: 'Clipboard not found' });
@@ -332,6 +385,7 @@ router.delete('/:id/clipboards/:clipboardId', async (req, res) => {
 // Upload file to container
 router.post('/:id/files', upload.single('file'), async (req, res) => {
   try {
+    const adminPassword = req.headers['x-admin-password'] || req.body['x-admin-password'];
     const container = await Container.findById(req.params.id);
 
     if (!container) {
@@ -340,6 +394,17 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
         await cloudinary.uploader.destroy(req.file.filename);
       }
       return res.status(404).json({ error: 'Container not found' });
+    }
+
+    // Check read-only access (Admin required)
+    if (container.readOnly) {
+      const isAdmin = await container.verifyAdminPassword(adminPassword);
+      if (!isAdmin) {
+        if (req.file && req.file.filename) {
+          await cloudinary.uploader.destroy(req.file.filename);
+        }
+        return res.status(403).json({ error: 'Admin access required to modify a read-only container' });
+      }
     }
 
     if (!req.file) {
@@ -389,6 +454,7 @@ router.post('/:id/files/multiple', (req, res) => {
 
     try {
       const container = await Container.findById(req.params.id);
+      const adminPassword = req.headers['x-admin-password'] || req.body['x-admin-password'];
 
       if (!container) {
         // Delete uploaded files from Cloudinary if container not found
@@ -398,6 +464,19 @@ router.post('/:id/files/multiple', (req, res) => {
           }
         }
         return res.status(404).json({ error: 'Container not found' });
+      }
+
+      // Check read-only access (Admin required)
+      if (container.readOnly) {
+        const isAdmin = await container.verifyAdminPassword(adminPassword);
+        if (!isAdmin) {
+          if (req.files && req.files.length > 0) {
+            for (const file of req.files) {
+              await cloudinary.uploader.destroy(file.filename).catch(() => { });
+            }
+          }
+          return res.status(403).json({ error: 'Admin access required to modify a read-only container' });
+        }
       }
 
       if (!req.files || req.files.length === 0) {
@@ -453,10 +532,26 @@ const chunkUploads = new Map();
 router.post('/:id/files/chunk', upload.single('chunk'), async (req, res) => {
   try {
     const { uploadId, chunkIndex, totalChunks, filename, fileType, fileSize } = req.body;
+    const adminPassword = req.headers['x-admin-password'] || req.body['x-admin-password'];
     const containerId = req.params.id;
 
     if (!req.file) {
       return res.status(400).json({ error: 'No chunk uploaded' });
+    }
+
+    // Check admin on the fly, since we might fail early before combining
+    const containerCheck = await Container.findById(containerId);
+    if (!containerCheck) {
+      if (req.file) try { fs.unlinkSync(req.file.path); } catch (e) { }
+      return res.status(404).json({ error: 'Container not found' });
+    }
+
+    if (containerCheck.readOnly) {
+      const isAdmin = await containerCheck.verifyAdminPassword(adminPassword);
+      if (!isAdmin) {
+        if (req.file) try { fs.unlinkSync(req.file.path); } catch (e) { }
+        return res.status(403).json({ error: 'Admin access required to modify a read-only container' });
+      }
     }
 
     const chunkIdx = parseInt(chunkIndex);
@@ -691,10 +786,19 @@ router.get('/:id/files/download-all', async (req, res) => {
 // Delete file from container
 router.delete('/:id/files/:fileId', async (req, res) => {
   try {
+    const adminPassword = req.headers['x-admin-password'];
     const container = await Container.findById(req.params.id);
 
     if (!container) {
       return res.status(404).json({ error: 'Container not found' });
+    }
+
+    // Check read-only access (Admin required)
+    if (container.readOnly) {
+      const isAdmin = await container.verifyAdminPassword(adminPassword);
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Admin access required to modify a read-only container' });
+      }
     }
 
     const file = container.files.id(req.params.fileId);

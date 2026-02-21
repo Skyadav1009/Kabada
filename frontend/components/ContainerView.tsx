@@ -12,11 +12,12 @@ const SOCKET_URL = (import.meta as any).env.VITE_API_URL ? (import.meta as any).
 
 interface ContainerViewProps {
   container: Container;
+  adminPassword?: string;
   refreshContainer: () => void;
   onClose: () => void;
 }
 
-const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContainer, onClose }) => {
+const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword, refreshContainer, onClose }) => {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<'files' | 'text' | 'chat'>('files');
   const [text, setText] = useState('');
@@ -49,6 +50,9 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
   const chatImageInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+
+  // Check if current user has write access
+  const hasWriteAccess = !container.readOnly || !!adminPassword;
 
   // Sync text and messages when container changes
   useEffect(() => {
@@ -146,7 +150,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
           setClipboards(prev => prev.map(c =>
             c.id === selectedClipboardId ? { ...c, content: text } : c
           ));
-          await updateClipboard(container.id, selectedClipboardId, { content: text });
+          await updateClipboard(container.id, selectedClipboardId, { content: text }, adminPassword);
         }
         setSaveStatus('saved');
         setTextSaved(true);
@@ -169,7 +173,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
 
     setIsCreatingClipboard(true);
     try {
-      const newCb = await createClipboard(container.id, newClipboardName);
+      const newCb = await createClipboard(container.id, newClipboardName, adminPassword);
       setNewClipboardName('');
       toast.success('Clipboard created');
       await refreshContainer();
@@ -188,7 +192,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
     }
     if (confirm('Are you sure you want to delete this clipboard?')) {
       try {
-        await deleteClipboard(container.id, clipboardId);
+        await deleteClipboard(container.id, clipboardId, adminPassword);
         toast.success('Clipboard deleted');
         if (selectedClipboardId === clipboardId) {
           setSelectedClipboardId(null);
@@ -224,9 +228,9 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
           await addFileWithProgress(container.id, file, (percent) => {
             const overallPercent = ((completedFiles + percent / 100) / totalFiles) * 100;
             setUploadPercent(Math.round(overallPercent));
-          });
+          }, adminPassword);
         } else {
-          await addFileToContainer(container.id, file);
+          await addFileToContainer(container.id, file, adminPassword);
           completedFiles++;
           setUploadPercent(Math.round((completedFiles / totalFiles) * 100));
         }
@@ -346,7 +350,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
   const handleRemoveFile = async (fileId: string) => {
     if (confirm('Are you sure you want to delete this file?')) {
       try {
-        await removeFileFromContainer(container.id, fileId);
+        await removeFileFromContainer(container.id, fileId, adminPassword);
         toast.success('File deleted');
         refreshContainer();
       } catch {
@@ -525,10 +529,10 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
         {/* Content */}
         <div
           className={`flex-1 p-3 sm:p-6 bg-zinc-950 transition-colors ${isDragging ? 'bg-amber-500/10' : ''}`}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
+          onDragEnter={hasWriteAccess ? handleDragEnter : undefined}
+          onDragLeave={hasWriteAccess ? handleDragLeave : undefined}
+          onDragOver={hasWriteAccess ? handleDragOver : undefined}
+          onDrop={hasWriteAccess ? handleDrop : undefined}
         >
           {/* Drag overlay */}
           {isDragging && (
@@ -570,43 +574,54 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                       <span className="sm:hidden">All</span>
                     </button>
                   )}
-                  <div className="relative">
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleFileUpload}
-                      className="hidden"
-                      id="file-upload"
-                      multiple
-                    />
-                    <label
-                      htmlFor="file-upload"
-                      className={`cursor-pointer inline-flex items-center px-3 sm:px-4 py-2 border border-transparent text-sm font-medium rounded-md text-zinc-900 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 shadow-sm w-full sm:w-auto justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      <Upload className="h-4 w-4 mr-2" />
-                      {isUploading ? 'Uploading...' : 'Upload Files'}
-                    </label>
-                  </div>
+                  {hasWriteAccess && (
+                    <div className="relative">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        id="file-upload"
+                        multiple
+                      />
+                      <label
+                        htmlFor="file-upload"
+                        className={`cursor-pointer inline-flex items-center px-3 sm:px-4 py-2 border border-transparent text-sm font-medium rounded-md text-zinc-900 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 shadow-sm w-full sm:w-auto justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        {isUploading ? 'Uploading...' : 'Upload Files'}
+                      </label>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Drag and drop zone when no files */}
               {container.files.length === 0 ? (
-                <div
-                  className={`text-center py-8 sm:py-12 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${isDragging
-                    ? 'border-amber-500 bg-amber-500/10'
-                    : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-900/50'
-                    }`}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <CloudUpload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-zinc-600" />
-                  <p className="mt-2 text-xs sm:text-sm text-zinc-500">
-                    Drag & drop files here or click to browse
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-600">
-                    Max 500MB per file • Any file type
-                  </p>
-                </div>
+                hasWriteAccess ? (
+                  <div
+                    className={`text-center py-8 sm:py-12 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${isDragging
+                      ? 'border-amber-500 bg-amber-500/10'
+                      : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-900/50'
+                      }`}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <CloudUpload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-zinc-600" />
+                    <p className="mt-2 text-xs sm:text-sm text-zinc-500">
+                      Drag & drop files here or click to browse
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-600">
+                      Max 500MB per file • Any file type
+                    </p>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 sm:py-12 border-2 border-dashed border-zinc-800 rounded-lg">
+                    <File className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-zinc-700" />
+                    <p className="mt-2 text-sm text-zinc-500">
+                      This container is empty.
+                    </p>
+                  </div>
+                )
               ) : (
                 <ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                   {container.files.map((file) => (
@@ -646,18 +661,20 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                       <div className="flex border-t border-zinc-700">
                         <button
                           onClick={() => handleDownload(file)}
-                          className="flex-1 py-2 text-xs text-zinc-400 hover:text-amber-400 hover:bg-zinc-700/50 transition-colors flex items-center justify-center gap-1"
+                          className={`${hasWriteAccess ? 'flex-1' : 'w-full'} py-2 text-xs text-zinc-400 hover:text-amber-400 hover:bg-zinc-700/50 transition-colors flex items-center justify-center gap-1`}
                         >
                           <Download className="w-3 h-3" />
                           Download
                         </button>
-                        <button
-                          onClick={() => handleRemoveFile(file.id)}
-                          className="flex-1 py-2 text-xs text-zinc-400 hover:text-red-400 hover:bg-zinc-700/50 transition-colors flex items-center justify-center gap-1 border-l border-zinc-700"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          Delete
-                        </button>
+                        {hasWriteAccess && (
+                          <button
+                            onClick={() => handleRemoveFile(file.id)}
+                            className="flex-1 py-2 text-xs text-zinc-400 hover:text-red-400 hover:bg-zinc-700/50 transition-colors flex items-center justify-center gap-1 border-l border-zinc-700"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </li>
                   ))}
@@ -686,23 +703,25 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                       className="w-full pl-9 pr-3 py-2 bg-zinc-950 border border-zinc-700 rounded-md text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                     />
                   </div>
-                  <form onSubmit={handleCreateClipboard} className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="New clipboard name"
-                      value={newClipboardName}
-                      onChange={(e) => setNewClipboardName(e.target.value)}
-                      className="flex-1 min-w-0 px-3 py-1.5 bg-zinc-950 border border-zinc-700 rounded-md text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                    <button
-                      type="submit"
-                      disabled={isCreatingClipboard || !newClipboardName.trim()}
-                      className="p-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 rounded-md hover:from-amber-500 hover:to-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
-                      title="Create Clipboard"
-                    >
-                      <Plus className="h-5 w-5" />
-                    </button>
-                  </form>
+                  {hasWriteAccess && (
+                    <form onSubmit={handleCreateClipboard} className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="New clipboard name"
+                        value={newClipboardName}
+                        onChange={(e) => setNewClipboardName(e.target.value)}
+                        className="flex-1 min-w-0 px-3 py-1.5 bg-zinc-950 border border-zinc-700 rounded-md text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isCreatingClipboard || !newClipboardName.trim()}
+                        className="p-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-900 rounded-md hover:from-amber-500 hover:to-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                        title="Create Clipboard"
+                      >
+                        <Plus className="h-5 w-5" />
+                      </button>
+                    </form>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -724,17 +743,19 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                           <FileText className={`h-4 w-4 flex-shrink-0 ${selectedClipboardId === clipboard.id ? 'text-amber-500' : 'text-zinc-500'}`} />
                           <span className="truncate text-sm font-medium">{clipboard.name}</span>
                         </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteClipboard(clipboard.id);
-                          }}
-                          className={`p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-700/80 transition-colors ${selectedClipboardId === clipboard.id ? 'opacity-100' : 'opacity-0 xl:group-hover:opacity-100'
-                            }`}
-                          title="Delete clipboard"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {hasWriteAccess && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteClipboard(clipboard.id);
+                            }}
+                            className={`p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-700/80 transition-colors ${selectedClipboardId === clipboard.id ? 'opacity-100' : 'opacity-0 xl:group-hover:opacity-100'
+                              }`}
+                            title="Delete clipboard"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     ))
                   )}
@@ -783,8 +804,9 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, refreshContain
                       <textarea
                         value={text}
                         onChange={(e) => setText(e.target.value)}
-                        className="w-full h-full p-4 border border-zinc-700 rounded-lg bg-zinc-900/80 text-zinc-100 placeholder-zinc-500 focus:ring-1 focus:ring-amber-500 focus:border-amber-500 resize-none font-mono text-sm shadow-inner"
-                        placeholder="Type or paste text here to share..."
+                        readOnly={!hasWriteAccess}
+                        className={`w-full h-full p-4 border border-zinc-700 rounded-lg text-zinc-100 placeholder-zinc-500 focus:ring-1 focus:ring-amber-500 focus:border-amber-500 resize-none font-mono text-sm shadow-inner ${!hasWriteAccess ? 'bg-zinc-900 cursor-default' : 'bg-zinc-900/80'}`}
+                        placeholder={hasWriteAccess ? "Type or paste text here to share..." : "This clipboard is empty."}
                         style={{ minHeight: '300px' }}
                       />
                       <div className="absolute bottom-3 right-3 flex justify-between text-xs text-zinc-400 bg-zinc-950/80 px-2 py-1 rounded backdrop-blur border border-zinc-800 shadow-sm pointer-events-none">

@@ -33,6 +33,8 @@ export interface Container {
   textContent: string; // legacy global text
   maxViews: number;
   currentViews: number;
+  readOnly?: boolean;
+  isAdmin?: boolean;
   deleted?: boolean;
   message?: string;
   createdAt: number;
@@ -46,6 +48,7 @@ export interface ContainerSummary {
   hasText: boolean;
   maxViews: number;
   currentViews: number;
+  readOnly?: boolean;
   createdAt: number;
 }
 
