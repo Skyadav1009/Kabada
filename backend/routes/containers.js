@@ -70,10 +70,16 @@ const cloudinaryStorage = new CloudinaryStorage({
       resourceType = 'raw'; // For documents, archives, etc.
     }
 
+    // Sanitize filename: remove extension, replace invalid chars with underscores
+    const sanitizedName = file.originalname
+      .replace(/\.[^/.]+$/, '') // Remove extension
+      .replace(/[^a-zA-Z0-9_-]/g, '_') // Replace invalid chars with underscore
+      .substring(0, 100); // Limit length
+
     return {
       folder: 'kabada-uploads',
       resource_type: resourceType,
-      public_id: `${Date.now()}-${Math.round(Math.random() * 1E9)}-${file.originalname.replace(/\.[^/.]+$/, '')}`,
+      public_id: `${Date.now()}-${Math.round(Math.random() * 1E9)}-${sanitizedName}`,
       allowed_formats: null, // Allow all formats
     };
   }
