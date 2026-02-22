@@ -19,6 +19,7 @@ export interface Clipboard {
   id: string;
   name: string;
   content: string;
+  pinned?: boolean;
   createdAt: number;
   updatedAt: number;
 }

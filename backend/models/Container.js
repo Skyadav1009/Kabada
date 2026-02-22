@@ -26,6 +26,7 @@ const messageSchema = new mongoose.Schema({
 const clipboardSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   content: { type: String, default: '' },
+  pinned: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -118,6 +119,7 @@ containerSchema.methods.toSafeObject = function () {
       id: c._id,
       name: c.name,
       content: c.content,
+      pinned: c.pinned,
       createdAt: c.createdAt,
       updatedAt: c.updatedAt
     })),

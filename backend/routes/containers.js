@@ -404,7 +404,7 @@ router.post('/:id/clipboards', async (req, res) => {
 // Update a clipboard (name or content)
 router.put('/:id/clipboards/:clipboardId', async (req, res) => {
   try {
-    const { name, content } = req.body;
+    const { name, content, pinned } = req.body;
     const adminPassword = req.headers['x-admin-password'];
     const container = await Container.findById(req.params.id);
 
@@ -431,6 +431,10 @@ router.put('/:id/clipboards/:clipboardId', async (req, res) => {
 
     if (content !== undefined) {
       clipboard.content = content;
+    }
+
+    if (pinned !== undefined) {
+      clipboard.pinned = Boolean(pinned);
     }
 
     clipboard.updatedAt = new Date();

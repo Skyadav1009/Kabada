@@ -6,7 +6,7 @@ import Button from './Button';
 import { useToast } from './Toast';
 import ShareModal from './ShareModal';
 import SettingsModal from './SettingsModal';
-import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown, Search, Plus, Settings } from 'lucide-react';
+import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown, Search, Plus, Settings, Pin, PinOff } from 'lucide-react';
 
 // Socket.IO server URL (matches API_BASE without /api)
 const SOCKET_URL = (import.meta as any).env.VITE_API_URL ? (import.meta as any).env.VITE_API_URL.replace('/api', '') : 'https://quickshare-1-9gjk.onrender.com';
@@ -204,6 +204,24 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
       } catch (error) {
         toast.error('Failed to delete clipboard');
       }
+    }
+  };
+
+  const handleTogglePinClipboard = async (clipboardId: string) => {
+    const cb = clipboards.find(c => c.id === clipboardId);
+    if (!cb) return;
+
+    try {
+      const isPinned = !cb.pinned;
+      // Optimistic upate
+      setClipboards(prev => prev.map(c => c.id === clipboardId ? { ...c, pinned: isPinned } : c));
+      await updateClipboard(container.id, clipboardId, { pinned: isPinned }, adminPassword);
+      toast.success(isPinned ? 'Clipboard pinned to top' : 'Clipboard unpinned');
+      refreshContainer();
+    } catch (error) {
+      // Revert if error
+      setClipboards(prev => prev.map(c => c.id === clipboardId ? { ...c, pinned: cb.pinned } : c));
+      toast.error('Failed to pin clipboard');
     }
   };
 
@@ -462,9 +480,14 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
     return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
   };
 
-  const filteredClipboards = clipboards.filter(cb =>
-    cb.name.toLowerCase().includes(clipboardSearchQuery.toLowerCase())
-  );
+  const filteredClipboards = clipboards
+    .filter(cb => cb.name.toLowerCase().includes(clipboardSearchQuery.toLowerCase()))
+    .sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      return 0; // retain original creation order inside pinned/unpinned groups
+    });
+
   const selectedClipboardInfo = clipboards.find(c => c.id === selectedClipboardId);
 
   return (
@@ -756,17 +779,30 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
                           <span className="truncate text-sm font-medium">{clipboard.name}</span>
                         </div>
                         {hasWriteAccess && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteClipboard(clipboard.id);
-                            }}
-                            className={`p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-700/80 transition-colors ${selectedClipboardId === clipboard.id ? 'opacity-100' : 'opacity-0 xl:group-hover:opacity-100'
-                              }`}
-                            title="Delete clipboard"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          <div className={`flex items-center gap-1 transition-opacity ${selectedClipboardId === clipboard.id || clipboard.pinned ? 'opacity-100' : 'opacity-0 xl:group-hover:opacity-100'}`}>
+                            {clipboard.id !== 'legacy' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleTogglePinClipboard(clipboard.id);
+                                }}
+                                className={`p-1 rounded transition-colors ${clipboard.pinned ? 'text-amber-500 hover:text-amber-400 bg-amber-500/10' : 'text-zinc-500 hover:text-amber-400 hover:bg-zinc-700/80'}`}
+                                title={clipboard.pinned ? "Unpin clipboard" : "Pin clipboard"}
+                              >
+                                <Pin className={`h-4 w-4 ${clipboard.pinned ? 'fill-current' : ''}`} />
+                              </button>
+                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteClipboard(clipboard.id);
+                              }}
+                              className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-700/80 transition-colors"
+                              title="Delete clipboard"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))

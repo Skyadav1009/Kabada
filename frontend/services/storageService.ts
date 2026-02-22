@@ -157,7 +157,7 @@ export const createClipboard = async (
 export const updateClipboard = async (
   containerId: string,
   clipboardId: string,
-  updates: { name?: string; content?: string },
+  updates: { name?: string; content?: string; pinned?: boolean },
   adminPassword?: string
 ): Promise<Clipboard> => {
   const headers: Record<string, string> = {};

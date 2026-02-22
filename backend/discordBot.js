@@ -45,14 +45,14 @@ const extractContainerId = (input) => {
 const downloadAndUpload = async (url, filename, mimetype) => {
   return new Promise((resolve, reject) => {
     const proto = url.startsWith('https') ? https : http;
-    
+
     proto.get(url, (response) => {
       const chunks = [];
       response.on('data', (chunk) => chunks.push(chunk));
       response.on('end', async () => {
         try {
           const buffer = Buffer.concat(chunks);
-          
+
           // Determine resource type
           let resourceType = 'auto';
           if (mimetype && mimetype.startsWith('video/')) {
@@ -107,7 +107,7 @@ const downloadAndUpload = async (url, filename, mimetype) => {
 // Initialize Discord bot
 const initDiscordBot = () => {
   const token = process.env.DISCORD_BOT_TOKEN;
-  
+
   if (!token) {
     console.log('⚠️  DISCORD_BOT_TOKEN not set - Discord bot disabled');
     return null;
@@ -168,6 +168,14 @@ const initDiscordBot = () => {
           .setRequired(false)),
 
     new SlashCommandBuilder()
+      .setName('pin')
+      .setDescription('Pin or unpin a clipboard to show in /status')
+      .addStringOption(option =>
+        option.setName('clipboard')
+          .setDescription('Clipboard name to pin/unpin')
+          .setRequired(true)),
+
+    new SlashCommandBuilder()
       .setName('clipboards')
       .setDescription('List all clipboards in the container'),
 
@@ -198,7 +206,7 @@ const initDiscordBot = () => {
 
   client.once('ready', async () => {
     console.log(`🤖 Discord bot logged in as ${client.user.tag}`);
-    
+
     // Register slash commands
     const rest = new REST({ version: '10' }).setToken(token);
     try {
@@ -229,6 +237,7 @@ const initDiscordBot = () => {
               { name: '📊 `/status`', value: 'Show linked container info' },
               { name: '📝 `/text <content> [clipboard]`', value: 'Write text to clipboard' },
               { name: '📖 `/read [clipboard]`', value: 'Read clipboard content' },
+              { name: '📌 `/pin <clipboard>`', value: 'Pin clipboard to status' },
               { name: '📋 `/clipboards`', value: 'List all clipboards' },
               { name: '➕ `/createclipboard <name>`', value: 'Create new clipboard' },
               { name: '📁 `/files`', value: 'List all files' },
@@ -324,8 +333,20 @@ const initDiscordBot = () => {
               { name: '🔒 Read-Only', value: container.readOnly ? 'Yes' : 'No', inline: true },
               { name: '🔑 Access', value: link.adminPassword ? 'Admin' : 'Visitor', inline: true },
               { name: '👁️ Views', value: container.maxViews > 0 ? `${container.currentViews}/${container.maxViews}` : 'Unlimited', inline: true }
-            )
-            .setFooter({ text: `Linked by ${link.linkedBy}` })
+            );
+
+          // Add pinned clipboards
+          const pinnedClipboards = container.clipboards.filter(c => c.pinned);
+          if (pinnedClipboards.length > 0) {
+            let pinnedText = '';
+            pinnedClipboards.forEach(c => {
+              const content = c.content || '*Empty*';
+              pinnedText += `\n**${c.name}**\n${content.substring(0, 1000)}${content.length > 1000 ? '...' : ''}\n`;
+            });
+            embed.addFields({ name: '📌 Pinned Clipboards', value: pinnedText.substring(0, 1024) });
+          }
+
+          embed.setFooter({ text: `Linked by ${link.linkedBy}` })
             .setTimestamp(new Date(link.linkedAt));
 
           await interaction.reply({ embeds: [embed] });
@@ -434,7 +455,7 @@ const initDiscordBot = () => {
             return;
           }
 
-          const list = container.clipboards.map((c, i) => 
+          const list = container.clipboards.map((c, i) =>
             `${i + 1}. **${c.name}** - ${c.content ? c.content.substring(0, 50) + (c.content.length > 50 ? '...' : '') : '*Empty*'}`
           ).join('\n');
 
@@ -480,6 +501,44 @@ const initDiscordBot = () => {
           break;
         }
 
+        case 'pin': {
+          if (!link) {
+            await interaction.reply({ content: '❌ This channel is not linked. Use `/link` first.', ephemeral: true });
+            return;
+          }
+
+          const clipboardName = interaction.options.getString('clipboard');
+          const container = await Container.findById(link.containerId);
+          if (!container) {
+            await interaction.reply({ content: '❌ Container not found!', ephemeral: true });
+            return;
+          }
+
+          // Check write access
+          if (container.readOnly && !link.adminPassword) {
+            await interaction.reply({ content: '❌ No write access to pin clipboards. Re-link with admin password.', ephemeral: true });
+            return;
+          }
+
+          const clipboard = container.clipboards.find(c => c.name.toLowerCase() === clipboardName.toLowerCase());
+          if (!clipboard) {
+            await interaction.reply({ content: `❌ Clipboard "${clipboardName}" not found!`, ephemeral: true });
+            return;
+          }
+
+          // Toggle pin status
+          clipboard.pinned = !clipboard.pinned;
+          container.lastAccessed = new Date();
+          await container.save();
+
+          if (clipboard.pinned) {
+            await interaction.reply({ content: `✅ Pinned clipboard "${clipboard.name}"! It will now appear in \`/status\`.` });
+          } else {
+            await interaction.reply({ content: `✅ Unpinned clipboard "${clipboard.name}".` });
+          }
+          break;
+        }
+
         case 'files': {
           if (!link) {
             await interaction.reply({ content: '❌ This channel is not linked. Use `/link` first.', ephemeral: true });
@@ -503,7 +562,7 @@ const initDiscordBot = () => {
             return (bytes / 1024 / 1024).toFixed(2) + ' MB';
           };
 
-          const list = container.files.slice(-15).map((f, i) => 
+          const list = container.files.slice(-15).map((f, i) =>
             `${i + 1}. **${f.originalName}** (${formatSize(f.size)})`
           ).join('\n');
 
@@ -545,7 +604,7 @@ const initDiscordBot = () => {
       }
     } catch (error) {
       console.error('Discord command error:', error);
-      await interaction.reply({ content: `❌ Error: ${error.message}`, ephemeral: true }).catch(() => {});
+      await interaction.reply({ content: `❌ Error: ${error.message}`, ephemeral: true }).catch(() => { });
     }
   });
 
