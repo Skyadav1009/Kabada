@@ -9,6 +9,7 @@ const fileSchema = new mongoose.Schema({
   path: { type: String, required: true }, // Cloudinary URL or local path
   publicId: { type: String, default: '' }, // Cloudinary public_id for deletion
   resourceType: { type: String, default: 'auto' }, // Cloudinary resource type
+  relativePath: { type: String, default: '' }, // Folder path for folder uploads
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -128,6 +129,7 @@ containerSchema.methods.toSafeObject = function () {
       name: f.originalName,
       type: f.mimetype,
       size: f.size,
+      relativePath: f.relativePath || '',
       createdAt: f.createdAt
     })),
     messages: this.messages.map(m => ({

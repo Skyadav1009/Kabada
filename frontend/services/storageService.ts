@@ -192,11 +192,13 @@ export const deleteClipboard = async (
 export const addFileToContainer = async (
   id: string,
   file: File,
-  adminPassword?: string
+  adminPassword?: string,
+  relativePath?: string
 ): Promise<FileMeta> => {
   const formData = new FormData();
   formData.append('file', file);
   if (adminPassword) formData.append('x-admin-password', adminPassword);
+  if (relativePath) formData.append('relativePath', relativePath);
 
   const response = await fetch(`${API_BASE}/containers/${id}/files`, {
     method: 'POST',
@@ -215,11 +217,15 @@ export const addFileToContainer = async (
 export const addFilesToContainer = async (
   id: string,
   files: File[],
-  adminPassword?: string
+  adminPassword?: string,
+  relativePaths?: string[]
 ): Promise<FileMeta[]> => {
   const formData = new FormData();
   files.forEach(file => formData.append('files', file));
   if (adminPassword) formData.append('x-admin-password', adminPassword);
+  if (relativePaths && relativePaths.length > 0) {
+    formData.append('relativePaths', JSON.stringify(relativePaths));
+  }
 
   const response = await fetch(`${API_BASE}/containers/${id}/files/multiple`, {
     method: 'POST',
@@ -240,7 +246,8 @@ export const addFileWithProgress = async (
   id: string,
   file: File,
   onProgress: (percent: number) => void,
-  adminPassword?: string
+  adminPassword?: string,
+  relativePath?: string
 ): Promise<FileMeta> => {
   const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -251,6 +258,7 @@ export const addFileWithProgress = async (
     const formData = new FormData();
     formData.append('file', file);
     if (adminPassword) formData.append('x-admin-password', adminPassword);
+    if (relativePath) formData.append('relativePath', relativePath);
 
     const response = await fetch(`${API_BASE}/containers/${id}/files`, {
       method: 'POST',
@@ -279,6 +287,7 @@ export const addFileWithProgress = async (
     formData.append('fileType', file.type);
     formData.append('fileSize', file.size.toString());
     if (adminPassword) formData.append('x-admin-password', adminPassword);
+    if (relativePath) formData.append('relativePath', relativePath);
 
     const response = await fetch(`${API_BASE}/containers/${id}/files/chunk`, {
       method: 'POST',

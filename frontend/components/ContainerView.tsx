@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { Container, FileMeta, Message, Clipboard } from '../types';
 import { updateContainerText, addFileToContainer, addFilesToContainer, addFileWithProgress, removeFileFromContainer, getFileDownloadUrl, getDownloadAllUrl, sendMessage, uploadChatImage, getUploadedImageUrl, createClipboard, updateClipboard, deleteClipboard } from '../services/storageService';
+import JSZip from 'jszip';
 import Button from './Button';
 import { useToast } from './Toast';
 import ShareModal from './ShareModal';
 import SettingsModal from './SettingsModal';
-import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown, Search, Plus, Settings, Pin, PinOff } from 'lucide-react';
+import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown, FolderUp, Search, Plus, Settings, Pin, PinOff } from 'lucide-react';
 
 // Socket.IO server URL (matches API_BASE without /api)
 const SOCKET_URL = (import.meta as any).env.VITE_API_URL ? (import.meta as any).env.VITE_API_URL.replace('/api', '') : 'https://quickshare-1-9gjk.onrender.com';
@@ -49,6 +50,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
   const [pastedImagePreview, setPastedImagePreview] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const chatImageInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -233,6 +235,109 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
     }
   };
 
+  const handleFolderUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const files: File[] = Array.from(e.target.files);
+      // Get folder name from the first file's webkitRelativePath
+      const firstPath = (files[0] as any).webkitRelativePath || '';
+      const folderName = firstPath.split('/')[0] || 'folder';
+
+      // Zip all files preserving relative paths
+      await zipAndUploadFiles(files.map(f => ({
+        file: f,
+        relativePath: (f as any).webkitRelativePath || f.name
+      })), folderName);
+      if (folderInputRef.current) folderInputRef.current.value = '';
+    }
+  };
+
+  // Zip files into a single .zip and upload it
+  const zipAndUploadFiles = async (
+    filesWithPaths: { file: File; relativePath: string }[],
+    zipName: string
+  ) => {
+    setIsUploading(true);
+    setUploadPercent(0);
+    setUploadProgress(`Zipping ${filesWithPaths.length} files from "${zipName}"...`);
+
+    try {
+      const zip = new JSZip();
+
+      // Add each file to zip with its relative path
+      for (const { file, relativePath } of filesWithPaths) {
+        const arrayBuffer = await file.arrayBuffer();
+        zip.file(relativePath, arrayBuffer);
+      }
+
+      // Generate the zip blob
+      setUploadProgress(`Compressing "${zipName}.zip"...`);
+      const zipBlob = await zip.generateAsync(
+        { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } },
+        (metadata) => {
+          setUploadPercent(Math.round(metadata.percent / 2)); // 0-50% for zipping
+        }
+      );
+
+      // Create a File object from the blob (use globalThis.File to avoid shadowing by lucide-react's File icon)
+      const zipFile = new globalThis.File([zipBlob], `${zipName}.zip`, { type: 'application/zip' });
+
+      // Upload the zip file
+      setUploadProgress(`Uploading "${zipName}.zip" (${formatFileSize(zipFile.size)})...`);
+
+      if (zipFile.size > 5 * 1024 * 1024) {
+        await addFileWithProgress(container.id, zipFile, (percent) => {
+          setUploadPercent(50 + Math.round(percent / 2)); // 50-100% for uploading
+        }, adminPassword);
+      } else {
+        await addFileToContainer(container.id, zipFile, adminPassword);
+        setUploadPercent(100);
+      }
+
+      toast.success(`Folder "${zipName}" uploaded as zip`);
+      refreshContainer();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to upload folder');
+    } finally {
+      setIsUploading(false);
+      setUploadProgress('');
+      setUploadPercent(0);
+    }
+  };
+
+  // Helper to recursively read all files from a dropped directory entry
+  const readDirectoryEntries = async (entry: FileSystemDirectoryEntry, basePath: string = ''): Promise<{ file: File; relativePath: string }[]> => {
+    const results: { file: File; relativePath: string }[] = [];
+    const reader = entry.createReader();
+
+    const readBatch = (): Promise<FileSystemEntry[]> => {
+      return new Promise((resolve, reject) => {
+        reader.readEntries(resolve, reject);
+      });
+    };
+
+    let entries: FileSystemEntry[] = [];
+    let batch: FileSystemEntry[];
+    do {
+      batch = await readBatch();
+      entries = entries.concat(batch);
+    } while (batch.length > 0);
+
+    for (const child of entries) {
+      const childPath = basePath ? `${basePath}/${child.name}` : child.name;
+      if (child.isFile) {
+        const fileEntry = child as FileSystemFileEntry;
+        const file = await new Promise<File>((resolve, reject) => {
+          fileEntry.file(resolve, reject);
+        });
+        results.push({ file, relativePath: childPath });
+      } else if (child.isDirectory) {
+        const subResults = await readDirectoryEntries(child as FileSystemDirectoryEntry, childPath);
+        results.push(...subResults);
+      }
+    }
+    return results;
+  };
+
   const uploadFiles = async (files: File[]) => {
     setIsUploading(true);
     setUploadPercent(0);
@@ -243,7 +348,6 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
       for (const file of files) {
         setUploadProgress(`Uploading ${file.name} (${completedFiles + 1}/${totalFiles})...`);
 
-        // Use chunked upload for files > 5MB
         if (file.size > 5 * 1024 * 1024) {
           await addFileWithProgress(container.id, file, (percent) => {
             const overallPercent = ((completedFiles + percent / 100) / totalFiles) * 100;
@@ -361,9 +465,38 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
 
     if (activeTab !== 'files') return;
 
-    const droppedFiles: File[] = Array.from(e.dataTransfer.files);
-    if (droppedFiles.length > 0) {
-      await uploadFiles(droppedFiles);
+    const items = e.dataTransfer.items;
+    if (items && items.length > 0) {
+      // Check if any items are directories using webkitGetAsEntry
+      const entries: (FileSystemEntry | null)[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const entry = items[i].webkitGetAsEntry?.();
+        entries.push(entry);
+      }
+
+      const plainFiles: File[] = [];
+
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (entry && entry.isDirectory) {
+          // Folder dropped: recursively read all files and zip them
+          const dirFiles = await readDirectoryEntries(entry as FileSystemDirectoryEntry, entry.name);
+          if (dirFiles.length > 0) {
+            await zipAndUploadFiles(dirFiles, entry.name);
+          }
+        } else if (entry && entry.isFile) {
+          const fileEntry = entry as FileSystemFileEntry;
+          const file = await new Promise<File>((resolve, reject) => {
+            fileEntry.file(resolve, reject);
+          });
+          plainFiles.push(file);
+        }
+      }
+
+      // Upload any plain files normally
+      if (plainFiles.length > 0) {
+        await uploadFiles(plainFiles);
+      }
     }
   };
 
@@ -574,8 +707,8 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
             <div className="fixed inset-0 z-50 bg-zinc-950/90 flex items-center justify-center pointer-events-none">
               <div className="text-center p-8 border-4 border-dashed border-amber-500 rounded-2xl bg-zinc-900/50">
                 <CloudUpload className="mx-auto h-16 w-16 text-amber-500 mb-4" />
-                <p className="text-xl font-medium text-white">Drop files here to upload</p>
-                <p className="text-sm text-zinc-400 mt-2">Release to upload your files</p>
+                <p className="text-xl font-medium text-white">Drop files or folders here to upload</p>
+                <p className="text-sm text-zinc-400 mt-2">Release to upload your files and folders</p>
               </div>
             </div>
           )}
@@ -610,23 +743,43 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
                     </button>
                   )}
                   {hasWriteAccess && (
-                    <div className="relative">
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleFileUpload}
-                        className="hidden"
-                        id="file-upload"
-                        multiple
-                      />
-                      <label
-                        htmlFor="file-upload"
-                        className={`cursor-pointer inline-flex items-center px-3 sm:px-4 py-2 border border-transparent text-sm font-medium rounded-md text-zinc-900 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 shadow-sm w-full sm:w-auto justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <Upload className="h-4 w-4 mr-2" />
-                        {isUploading ? 'Uploading...' : 'Upload Files'}
-                      </label>
-                    </div>
+                    <>
+                      <div className="relative">
+                        <input
+                          type="file"
+                          ref={folderInputRef}
+                          onChange={handleFolderUpload}
+                          className="hidden"
+                          id="folder-upload"
+                          {...({ webkitdirectory: '', directory: '' } as any)}
+                        />
+                        <label
+                          htmlFor="folder-upload"
+                          className={`cursor-pointer inline-flex items-center px-3 sm:px-4 py-2 border border-zinc-700 text-sm font-medium rounded-md text-zinc-200 bg-zinc-800 hover:bg-zinc-700 transition-colors w-full sm:w-auto justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <FolderUp className="h-4 w-4 mr-2" />
+                          <span className="hidden sm:inline">{isUploading ? 'Uploading...' : 'Upload Folder'}</span>
+                          <span className="sm:hidden">{isUploading ? '...' : 'Folder'}</span>
+                        </label>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          onChange={handleFileUpload}
+                          className="hidden"
+                          id="file-upload"
+                          multiple
+                        />
+                        <label
+                          htmlFor="file-upload"
+                          className={`cursor-pointer inline-flex items-center px-3 sm:px-4 py-2 border border-transparent text-sm font-medium rounded-md text-zinc-900 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 shadow-sm w-full sm:w-auto justify-center ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <Upload className="h-4 w-4 mr-2" />
+                          {isUploading ? 'Uploading...' : 'Upload Files'}
+                        </label>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -643,10 +796,10 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
                   >
                     <CloudUpload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-zinc-600" />
                     <p className="mt-2 text-xs sm:text-sm text-zinc-500">
-                      Drag & drop files here or click to browse
+                      Drag & drop files or folders here, or click to browse
                     </p>
                     <p className="mt-1 text-xs text-zinc-600">
-                      Max 500MB per file • Any file type
+                      Max 500MB per file • Any file type • Folder upload supported
                     </p>
                   </div>
                 ) : (
@@ -689,7 +842,12 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
                       </div>
                       {/* File info */}
                       <div className="p-3">
-                        <h3 className="text-white text-xs font-medium truncate" title={file.name}>{file.name}</h3>
+                        {file.relativePath && (
+                          <p className="text-amber-500/70 text-[10px] truncate mb-0.5" title={file.relativePath}>
+                            📁 {file.relativePath.split('/').slice(0, -1).join('/') || file.relativePath}
+                          </p>
+                        )}
+                        <h3 className="text-white text-xs font-medium truncate" title={file.relativePath || file.name}>{file.name}</h3>
                         <p className="text-zinc-500 text-xs mt-1">{formatFileSize(file.size)}</p>
                       </div>
                       {/* Actions */}
@@ -718,7 +876,7 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
 
               {/* Drag and drop hint */}
               <div className="mt-4 text-center text-xs text-zinc-600">
-                💡 Tip: Drag & drop files anywhere to upload
+                💡 Tip: Drag & drop files or folders anywhere to upload
               </div>
             </div>
           )}

@@ -60,15 +60,10 @@ cloudinary.config({
 const cloudinaryStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: async (req, file) => {
-    // Determine resource type based on mimetype
-    let resourceType = 'auto';
-    if (file.mimetype.startsWith('video/')) {
-      resourceType = 'video';
-    } else if (file.mimetype.startsWith('image/')) {
-      resourceType = 'image';
-    } else {
-      resourceType = 'raw'; // For documents, archives, etc.
-    }
+    // Use 'raw' for all uploads to prevent Cloudinary from rejecting
+    // unsupported video/image formats. Files are served through our API
+    // proxy with correct Content-Type headers, so this doesn't affect functionality.
+    const resourceType = 'raw';
 
     // Sanitize filename: remove extension, replace invalid chars with underscores
     const sanitizedName = file.originalname
@@ -507,6 +502,8 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    const relativePath = req.body.relativePath || '';
+
     const fileData = {
       filename: req.file.filename,
       originalName: req.file.originalname,
@@ -515,7 +512,8 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
       path: req.file.path, // Cloudinary URL
       publicId: req.file.filename, // Cloudinary public_id
       resourceType: req.file.mimetype.startsWith('video/') ? 'video' :
-        req.file.mimetype.startsWith('image/') ? 'image' : 'raw'
+        req.file.mimetype.startsWith('image/') ? 'image' : 'raw',
+      relativePath: relativePath
     };
 
     container.files.push(fileData);
@@ -529,6 +527,7 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
       name: addedFile.originalName,
       type: addedFile.mimetype,
       size: addedFile.size,
+      relativePath: addedFile.relativePath || '',
       createdAt: addedFile.createdAt
     });
 
@@ -583,8 +582,18 @@ router.post('/:id/files/multiple', (req, res) => {
       }
 
       const addedFiles = [];
+      // Parse relativePaths from body (sent as JSON array string)
+      let relativePaths = [];
+      try {
+        if (req.body.relativePaths) {
+          relativePaths = JSON.parse(req.body.relativePaths);
+        }
+      } catch (e) {
+        // Ignore parse errors, treat as no paths
+      }
 
-      for (const file of req.files) {
+      for (let i = 0; i < req.files.length; i++) {
+        const file = req.files[i];
         const fileData = {
           filename: file.filename,
           originalName: file.originalname,
@@ -593,7 +602,8 @@ router.post('/:id/files/multiple', (req, res) => {
           path: file.path, // Cloudinary URL
           publicId: file.filename, // Cloudinary public_id
           resourceType: file.mimetype.startsWith('video/') ? 'video' :
-            file.mimetype.startsWith('image/') ? 'image' : 'raw'
+            file.mimetype.startsWith('image/') ? 'image' : 'raw',
+          relativePath: relativePaths[i] || ''
         };
         container.files.push(fileData);
         addedFiles.push(container.files[container.files.length - 1]);
@@ -609,6 +619,7 @@ router.post('/:id/files/multiple', (req, res) => {
           name: f.originalName,
           type: f.mimetype,
           size: f.size,
+          relativePath: f.relativePath || '',
           createdAt: f.createdAt
         }))
       });
@@ -633,7 +644,7 @@ const chunkUploads = new Map();
 // Chunked file upload endpoint
 router.post('/:id/files/chunk', upload.single('chunk'), async (req, res) => {
   try {
-    const { uploadId, chunkIndex, totalChunks, filename, fileType, fileSize } = req.body;
+    const { uploadId, chunkIndex, totalChunks, filename, fileType, fileSize, relativePath } = req.body;
     const adminPassword = req.headers['x-admin-password'] || req.body['x-admin-password'];
     const containerId = req.params.id;
 
@@ -724,7 +735,8 @@ router.post('/:id/files/chunk', upload.single('chunk'), async (req, res) => {
       originalName: filename,
       mimetype: fileType || 'application/octet-stream',
       size: uploadData.fileSize,
-      path: finalPath
+      path: finalPath,
+      relativePath: relativePath || ''
     };
 
     container.files.push(fileData);
@@ -738,6 +750,7 @@ router.post('/:id/files/chunk', upload.single('chunk'), async (req, res) => {
       name: addedFile.originalName,
       type: addedFile.mimetype,
       size: addedFile.size,
+      relativePath: addedFile.relativePath || '',
       createdAt: addedFile.createdAt
     });
 

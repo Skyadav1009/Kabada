@@ -4,6 +4,7 @@ export interface FileMeta {
   type: string;
   size: number;
   dataUrl?: string; // Storing small files as base64 for demo purposes
+  relativePath?: string; // Folder path for folder uploads
   createdAt: number;
 }
 
