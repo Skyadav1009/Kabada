@@ -62,4 +62,38 @@ export enum ViewState {
   CONTAINER = 'CONTAINER',
   ADMIN_LOGIN = 'ADMIN_LOGIN',
   ADMIN_DASHBOARD = 'ADMIN_DASHBOARD',
+  GITHUB_IMPORT = 'GITHUB_IMPORT',
+  SANDBOX = 'SANDBOX',
+}
+
+export interface GitHubImportResult {
+  containerId: string;
+  containerName: string;
+  password: string;
+  sandboxUrl: string;
+  fileCount: number;
+  skippedCount: number;
+  totalSize: number;
+  repoInfo: {
+    owner: string;
+    repo: string;
+    branch: string;
+    description: string;
+    stars: number;
+    language: string;
+  };
+}
+
+export interface GitHubRepoInfo {
+  owner: string;
+  repo: string;
+  branch: string;
+  description: string;
+  stars: number;
+  forks: number;
+  language: string;
+  size: number;
+  sizeHuman: string;
+  isTooBig: boolean;
+  defaultBranch: string;
 }

@@ -3,13 +3,13 @@ import { HashRouter } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Button from './components/Button';
 import ContainerView from './components/ContainerView';
+import GitHubSandbox from './components/GitHubSandbox';
 import { useToast } from './components/Toast';
-import { createContainer, searchContainers, getContainerById, unlockContainer, getRecentContainers } from './services/storageService';
+import { createContainer, searchContainers, getContainerById, unlockContainer, getRecentContainers, importGitHubRepo } from './services/storageService';
 import AdminLogin from './components/AdminLogin';
 import AdminDashboard from './components/AdminDashboard';
-import { Container, ContainerSummary, ViewState } from './types';
-import { Search, Plus, Lock, ArrowRight, ShieldCheck, Eye, Shield } from 'lucide-react';
-// check
+import { Container, ContainerSummary, ViewState, GitHubImportResult } from './types';
+import { Search, Plus, Lock, ArrowRight, ShieldCheck, Eye, Shield, GitBranch } from 'lucide-react';
 const App: React.FC = () => {
   const toast = useToast();
   // Diagnostic message to confirm component render
@@ -36,6 +36,11 @@ const App: React.FC = () => {
   const [oneTimeOpen, setOneTimeOpen] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+
+  // GitHub Import States
+  const [githubUrl, setGithubUrl] = useState('');
+  const [githubImporting, setGithubImporting] = useState(false);
+  const [githubImportResult, setGithubImportResult] = useState<GitHubImportResult | null>(null);
 
   // Load recent containers on mount and when returning to home
   useEffect(() => {
@@ -71,6 +76,50 @@ const App: React.FC = () => {
         return;
       }
 
+      // Handle Sandbox Deep Link
+      const sandboxMatch = hash.match(/^#\/sandbox\/([a-fA-F0-9]+)$/);
+      if (sandboxMatch) {
+        const containerId = sandboxMatch[1];
+        // If we already have a sandbox result with this ID, stay in SANDBOX
+        if (viewState === ViewState.SANDBOX && githubImportResult?.containerId === containerId) {
+          return;
+        }
+        // Try to auto-recover sandbox from sessionStorage
+        const savedPassword = sessionStorage.getItem(`sandbox-pass-${containerId}`);
+        const savedInfo = sessionStorage.getItem(`sandbox-info-${containerId}`);
+        if (savedPassword && savedInfo) {
+          try {
+            const info = JSON.parse(savedInfo);
+            setGithubImportResult({
+              containerId,
+              containerName: info.containerName || '',
+              password: savedPassword,
+              sandboxUrl: `#/sandbox/${containerId}`,
+              fileCount: info.fileCount || 0,
+              skippedCount: info.skippedCount || 0,
+              totalSize: info.totalSize || 0,
+              repoInfo: info.repoInfo || { owner: '', repo: '', branch: 'main', description: '', stars: 0, language: '' },
+            });
+            setViewState(ViewState.SANDBOX);
+            return;
+          } catch (e) {
+            // Fall through to unlock
+          }
+        }
+        // No saved password — go to unlock screen
+        setSelectedContainerId(containerId);
+        setViewState(ViewState.UNLOCK);
+        return;
+      }
+
+      // Handle GitHub auto-import deep link: #/github/owner/repo
+      const githubMatch = hash.match(/^#\/github\/([^/]+)\/([^/]+)$/);
+      if (githubMatch) {
+        const autoUrl = `https://github.com/${githubMatch[1]}/${githubMatch[2]}`;
+        handleGitHubImport(autoUrl);
+        return;
+      }
+
       // Handle Container Deep Link
       const match = hash.match(/^#\/container\/([a-fA-F0-9]+)$/);
       if (match) {
@@ -79,7 +128,7 @@ const App: React.FC = () => {
           setSelectedContainerId(containerId);
           setViewState(ViewState.UNLOCK);
         }
-      } else if (viewState !== ViewState.HOME && viewState !== ViewState.CREATE && !hash.includes('admin')) {
+      } else if (viewState !== ViewState.HOME && viewState !== ViewState.CREATE && !hash.includes('admin') && viewState !== ViewState.SANDBOX && viewState !== ViewState.GITHUB_IMPORT) {
         setViewState(ViewState.HOME);
       }
     };
@@ -90,11 +139,14 @@ const App: React.FC = () => {
     // Listen to changes
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [adminToken, viewState, activeContainer]);
+  }, [adminToken, viewState, activeContainer, githubImportResult]);
 
   // Update URL hash when navigating
   const updateHash = useCallback((state: ViewState, containerId?: string) => {
-    if (state === ViewState.CONTAINER && containerId) {
+    if (state === ViewState.SANDBOX && containerId) {
+      // Use replaceState to avoid triggering hashchange (prevents race condition)
+      window.history.replaceState(null, '', `#/sandbox/${containerId}`);
+    } else if (state === ViewState.CONTAINER && containerId) {
       window.location.hash = `/container/${containerId}`;
     } else if (state === ViewState.UNLOCK && containerId) {
       window.location.hash = `/container/${containerId}`;
@@ -104,6 +156,41 @@ const App: React.FC = () => {
       window.location.hash = '/';
     }
   }, []);
+
+  // GitHub import handler
+  const handleGitHubImport = async (url?: string) => {
+    const repoUrl = url || githubUrl.trim();
+    if (!repoUrl) return;
+
+    setGithubImporting(true);
+    setViewState(ViewState.GITHUB_IMPORT);
+    setErrorMsg('');
+
+    try {
+      const result = await importGitHubRepo(repoUrl);
+      // Persist sandbox credentials in sessionStorage for deep link recovery
+      sessionStorage.setItem(`sandbox-pass-${result.containerId}`, result.password);
+      sessionStorage.setItem(`sandbox-info-${result.containerId}`, JSON.stringify({
+        containerName: result.containerName,
+        fileCount: result.fileCount,
+        skippedCount: result.skippedCount,
+        totalSize: result.totalSize,
+        repoInfo: result.repoInfo,
+      }));
+      setGithubImportResult(result);
+      setViewState(ViewState.SANDBOX);
+      updateHash(ViewState.SANDBOX, result.containerId);
+      setGithubUrl('');
+      toast.success(`Repository imported! ${result.fileCount} files loaded.`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to import repository');
+      setErrorMsg(err.message || 'Failed to import repository');
+      setViewState(ViewState.HOME);
+      updateHash(ViewState.HOME);
+    } finally {
+      setGithubImporting(false);
+    }
+  };
 
   // Handle Search
   useEffect(() => {
@@ -183,6 +270,34 @@ const App: React.FC = () => {
     setErrorMsg('');
   };
 
+  // Open a container: GitHub imports go straight to sandbox, others go to unlock
+  const openContainerOrSandbox = (container: ContainerSummary) => {
+    if (container.name.startsWith('gh-')) {
+      // GitHub import — open directly as sandbox (no password needed)
+      setGithubImportResult({
+        containerId: container.id,
+        containerName: container.name,
+        password: '',
+        sandboxUrl: `#/sandbox/${container.id}`,
+        fileCount: container.fileCount,
+        skippedCount: 0,
+        totalSize: 0,
+        repoInfo: {
+          owner: container.name.split('-')[1] || '',
+          repo: container.name.split('-').slice(2).join('-') || container.name,
+          branch: 'main',
+          description: '',
+          stars: 0,
+          language: '',
+        },
+      });
+      setViewState(ViewState.SANDBOX);
+      updateHash(ViewState.SANDBOX, container.id);
+    } else {
+      openUnlockScreen(container.id);
+    }
+  };
+
   const refreshActiveContainer = async () => {
     if (activeContainer) {
       const adminPass = sessionStorage.getItem(`admin-pass-${activeContainer.id}`) || undefined;
@@ -222,6 +337,43 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {/* GitHub Import Section */}
+              <div className="bg-gradient-to-r from-zinc-900 to-zinc-900/80 rounded-xl shadow-lg shadow-black/20 border border-zinc-800 p-4 sm:p-6 mb-6 sm:mb-8">
+                <div className="flex items-center gap-2 mb-3">
+                  <GitBranch className="h-5 w-5 text-amber-500" />
+                  <h3 className="text-sm font-semibold text-zinc-300">Open GitHub Repository</h3>
+                </div>
+                <p className="text-xs text-zinc-500 mb-3">
+                  Paste a public GitHub repo URL to explore it in an interactive sandbox
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className="flex-1 px-3 py-2.5 border border-zinc-700 rounded-lg bg-zinc-800 placeholder-zinc-500 text-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm"
+                    placeholder="https://github.com/owner/repo"
+                    value={githubUrl}
+                    onChange={(e) => setGithubUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleGitHubImport();
+                    }}
+                  />
+                  <Button
+                    onClick={() => handleGitHubImport()}
+                    disabled={!githubUrl.trim() || githubImporting}
+                    className="px-4 sm:px-6 flex-shrink-0 text-sm"
+                  >
+                    {githubImporting ? (
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    ) : (
+                      'Open'
+                    )}
+                  </Button>
+                </div>
+              </div>
+
               {/* Search Section */}
               <div className="bg-zinc-900 rounded-xl shadow-lg shadow-black/20 border border-zinc-800 p-4 sm:p-6 mb-6 sm:mb-8">
                 <div className="relative">
@@ -252,7 +404,7 @@ const App: React.FC = () => {
                   {searchResults.map((container) => (
                     <div
                       key={container.id}
-                      onClick={() => openUnlockScreen(container.id)}
+                      onClick={() => openContainerOrSandbox(container)}
                       className="bg-zinc-900 p-4 sm:p-6 rounded-lg shadow-sm border border-zinc-800 hover:shadow-lg hover:shadow-amber-500/10 hover:border-amber-500/50 transition-all cursor-pointer group active:bg-zinc-800 relative"
                     >
                       <div className="flex justify-between items-start">
@@ -273,7 +425,11 @@ const App: React.FC = () => {
                       </div>
                       <div className="mt-3 sm:mt-4 flex flex-wrap items-center gap-2 sm:space-x-4 text-xs sm:text-sm text-zinc-500">
                         <span className="flex items-center">
-                          <ShieldCheck className="h-3 w-3 sm:h-4 sm:w-4 mr-1 text-emerald-500" /> Protected
+                          {container.name.startsWith('gh-') ? (
+                            <><GitBranch className="h-3 w-3 sm:h-4 sm:w-4 mr-1 text-amber-500" /> GitHub Import</>
+                          ) : (
+                            <><ShieldCheck className="h-3 w-3 sm:h-4 sm:w-4 mr-1 text-emerald-500" /> Protected</>
+                          )}
                         </span>
                         <span className="hidden sm:inline">•</span>
                         <span>{container.fileCount} Files</span>
@@ -317,7 +473,7 @@ const App: React.FC = () => {
                       {recentContainers.map((container) => (
                         <div
                           key={container.id}
-                          onClick={() => openUnlockScreen(container.id)}
+                          onClick={() => openContainerOrSandbox(container)}
                           className="bg-zinc-900 p-4 sm:p-6 rounded-lg shadow-sm border border-zinc-800 hover:shadow-lg hover:shadow-amber-500/10 hover:border-amber-500/50 transition-all cursor-pointer group active:bg-zinc-800 relative"
                         >
                           <div className="flex justify-between items-start">
@@ -338,7 +494,11 @@ const App: React.FC = () => {
                           </div>
                           <div className="mt-3 sm:mt-4 flex flex-wrap items-center gap-2 sm:space-x-4 text-xs sm:text-sm text-zinc-500">
                             <span className="flex items-center">
-                              <ShieldCheck className="h-3 w-3 sm:h-4 sm:w-4 mr-1 text-emerald-500" /> Protected
+                              {container.name.startsWith('gh-') ? (
+                                <><GitBranch className="h-3 w-3 sm:h-4 sm:w-4 mr-1 text-amber-500" /> GitHub Import</>
+                              ) : (
+                                <><ShieldCheck className="h-3 w-3 sm:h-4 sm:w-4 mr-1 text-emerald-500" /> Protected</>
+                              )}
                             </span>
                             <span className="hidden sm:inline">•</span>
                             <span>{container.fileCount} Files</span>
@@ -599,6 +759,37 @@ const App: React.FC = () => {
               onClose={() => {
                 sessionStorage.removeItem(`admin-pass-${activeContainer.id}`);
                 setActiveContainer(null);
+                setViewState(ViewState.HOME);
+                updateHash(ViewState.HOME);
+              }}
+            />
+          )}
+
+          {/* GITHUB IMPORT LOADING VIEW */}
+          {viewState === ViewState.GITHUB_IMPORT && (
+            <div className="flex items-center justify-center h-[calc(100vh-64px)] bg-zinc-950">
+              <div className="text-center max-w-md px-4">
+                <div className="mb-6">
+                  <div className="relative">
+                    <svg className="animate-spin h-12 w-12 text-amber-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  </div>
+                </div>
+                <h2 className="text-xl font-bold text-white mb-2">Importing Repository</h2>
+                <p className="text-zinc-400 text-sm mb-2">Downloading and extracting files...</p>
+                <p className="text-zinc-600 text-xs">This may take a moment for larger repositories</p>
+              </div>
+            </div>
+          )}
+
+          {/* SANDBOX VIEW */}
+          {viewState === ViewState.SANDBOX && githubImportResult && (
+            <GitHubSandbox
+              importResult={githubImportResult}
+              onClose={() => {
+                setGithubImportResult(null);
                 setViewState(ViewState.HOME);
                 updateHash(ViewState.HOME);
               }}

@@ -1,4 +1,4 @@
-import { Container, ContainerSummary, FileMeta, Message, Clipboard } from '../types';
+import { Container, ContainerSummary, FileMeta, Message, Clipboard, GitHubImportResult, GitHubRepoInfo } from '../types';
 
 // Use environment variable for API base URL, fallback to production
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -405,4 +405,21 @@ export const deleteContainerAdmin = async (id: string, token: string): Promise<{
     method: 'DELETE',
     headers: { 'x-super-admin-token': token }
   });
+};
+
+// --- GitHub Import APIs ---
+export const importGitHubRepo = async (
+  repoUrl: string,
+  branch?: string
+): Promise<GitHubImportResult> => {
+  return await apiRequest<GitHubImportResult>('/github/import', {
+    method: 'POST',
+    body: JSON.stringify({ repoUrl, branch }),
+  });
+};
+
+export const getGitHubRepoInfo = async (repoUrl: string): Promise<GitHubRepoInfo> => {
+  return await apiRequest<GitHubRepoInfo>(
+    `/github/info?url=${encodeURIComponent(repoUrl)}`
+  );
 };

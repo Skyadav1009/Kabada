@@ -8,6 +8,7 @@ const { Server } = require('socket.io');
 
 const containerRoutes = require('./routes/containers');
 const adminRoutes = require('./routes/admin');
+const githubRoutes = require('./routes/github');
 const { initDiscordBot } = require('./discordBot');
 
 const app = express();
@@ -94,6 +95,7 @@ app.set('io', io);
 // API Routes
 app.use('/api/containers', containerRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/github', githubRoutes);
 
 // Health check with database status
 app.get('/api/health', (req, res) => {
@@ -104,7 +106,7 @@ app.get('/api/health', (req, res) => {
     2: 'connecting',
     3: 'disconnecting'
   };
-  
+
   res.json({
     status: dbState === 1 ? 'ok' : 'degraded',
     database: dbStatus[dbState] || 'unknown',
@@ -132,7 +134,7 @@ async function connectWithRetry(retries = MAX_RETRIES) {
   try {
     await mongoose.connect(MONGODB_URI, mongooseOptions);
     console.log('✅ Connected to MongoDB');
-    
+
     server.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
       console.log('🔌 Socket.IO ready for real-time connections');
@@ -141,7 +143,7 @@ async function connectWithRetry(retries = MAX_RETRIES) {
     });
   } catch (error) {
     console.error(`❌ MongoDB connection error (${MAX_RETRIES - retries + 1}/${MAX_RETRIES}):`, error.message);
-    
+
     if (retries > 1) {
       console.log(`⏳ Retrying in ${RETRY_DELAY / 1000} seconds...`);
       await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
