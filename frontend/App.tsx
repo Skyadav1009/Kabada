@@ -49,6 +49,32 @@ const App: React.FC = () => {
     }
   }, [viewState]);
 
+  // Path-based GitHub URL detection (CodeSandbox-style)
+  // Supports: /github/owner/repo, /github/owner/repo/tree/branch, /github.com/owner/repo
+  // User workflow: change "github.com/owner/repo" to "kabada.vercel.app/github/owner/repo"
+  const [pathImportHandled, setPathImportHandled] = useState(false);
+  useEffect(() => {
+    if (pathImportHandled) return;
+
+    const pathname = window.location.pathname;
+
+    // Match: /github/owner/repo or /github/owner/repo/tree/branch
+    const githubPathMatch = pathname.match(/^\/github\/([^/]+)\/([^/]+)(?:\/tree\/(.+))?$/);
+    // Match: /github.com/owner/repo or /github.com/owner/repo/tree/branch
+    const githubComMatch = pathname.match(/^\/github\.com\/([^/]+)\/([^/]+)(?:\/tree\/(.+))?$/);
+
+    const match = githubPathMatch || githubComMatch;
+    if (match) {
+      const [, owner, repo, branch] = match;
+      setPathImportHandled(true);
+      // Clean up the URL to the hash-based format
+      window.history.replaceState(null, '', `/#/github/${owner}/${repo}`);
+      // Auto-trigger import
+      const repoUrl = `https://github.com/${owner}/${repo}`;
+      handleGitHubImport(repoUrl, branch);
+    }
+  }, [pathImportHandled]);
+
   const loadRecentContainers = async () => {
     setIsLoadingRecent(true);
     try {
@@ -158,7 +184,7 @@ const App: React.FC = () => {
   }, []);
 
   // GitHub import handler
-  const handleGitHubImport = async (url?: string) => {
+  const handleGitHubImport = async (url?: string, branchOverride?: string) => {
     const repoUrl = url || githubUrl.trim();
     if (!repoUrl) return;
 
@@ -167,7 +193,7 @@ const App: React.FC = () => {
     setErrorMsg('');
 
     try {
-      const result = await importGitHubRepo(repoUrl);
+      const result = await importGitHubRepo(repoUrl, branchOverride || undefined);
       // Persist sandbox credentials in sessionStorage for deep link recovery
       sessionStorage.setItem(`sandbox-pass-${result.containerId}`, result.password);
       sessionStorage.setItem(`sandbox-info-${result.containerId}`, JSON.stringify({
@@ -344,7 +370,7 @@ const App: React.FC = () => {
                   <h3 className="text-sm font-semibold text-zinc-300">Open GitHub Repository</h3>
                 </div>
                 <p className="text-xs text-zinc-500 mb-3">
-                  Paste a public GitHub repo URL to explore it in an interactive sandbox
+                  Paste a URL below, or replace <code className="text-amber-400/80 bg-zinc-800 px-1 py-0.5 rounded">github.com</code> with <code className="text-amber-400/80 bg-zinc-800 px-1 py-0.5 rounded">kabada.vercel.app/github</code> in any repo URL
                 </p>
                 <div className="flex gap-2">
                   <input
