@@ -609,7 +609,7 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
             }
 
             // Boot WebContainer
-            const wc = await WebContainer.boot();
+            const wc = await WebContainer.boot({ coep: 'credentialless' });
             webContainerRef.current = wc;
 
             setContainerStatus('mounting');
@@ -656,7 +656,8 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                 setStatusMessage('Running npm install...');
                 // Give the shell a moment to initialize
                 await new Promise(resolve => setTimeout(resolve, 500));
-                shellWriterRef.current.write('npm install && npm run dev\n');
+                // Set HOST=0.0.0.0 so Vite/webpack dev server binds to all interfaces
+                shellWriterRef.current.write('export HOST=0.0.0.0 && npm install && npm run dev -- --host 0.0.0.0\n');
                 setContainerStatus('running');
                 setStatusMessage('Installing dependencies...');
             } else {
@@ -1163,7 +1164,8 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                                                     ref={iframeRef}
                                                     src={previewUrl}
                                                     className="flex-1 w-full bg-white"
-                                                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                                                    // @ts-ignore — credentialless is a valid HTML attribute but not yet in React's types
+                                                    credentialless="true"
                                                     title="Preview"
                                                 />
                                             </>
