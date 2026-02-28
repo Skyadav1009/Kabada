@@ -369,9 +369,7 @@ const App: React.FC = () => {
                   <GitBranch className="h-5 w-5 text-amber-500" />
                   <h3 className="text-sm font-semibold text-zinc-300">Open GitHub Repository</h3>
                 </div>
-                <p className="text-xs text-zinc-500 mb-3">
-                  Paste a URL below, or replace <code className="text-amber-400/80 bg-zinc-800 px-1 py-0.5 rounded">github.com</code> with <code className="text-amber-400/80 bg-zinc-800 px-1 py-0.5 rounded">kabada.vercel.app/github</code> in any repo URL
-                </p>
+
                 <div className="flex gap-2">
                   <input
                     type="text"
