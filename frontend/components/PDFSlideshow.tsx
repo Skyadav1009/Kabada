@@ -30,6 +30,8 @@ const PDFSlideshow: React.FC<PDFSlideshowProps> = ({
     const [scale, setScale] = useState<number>(1);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [containerWidth, setContainerWidth] = useState<number>(800);
+    const [containerHeight, setContainerHeight] = useState<number>(600);
+    const [pageAspectRatio, setPageAspectRatio] = useState<number>(0.707); // default A4 portrait
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string>('');
 
@@ -45,18 +47,36 @@ const PDFSlideshow: React.FC<PDFSlideshowProps> = ({
     // Minimum swipe distance (in px)
     const minSwipeDistance = 50;
 
-    // Measure container width for responsive scaling
+    // Measure container dimensions for responsive scaling
     useEffect(() => {
-        const updateWidth = () => {
+        const updateDimensions = () => {
             if (pageContainerRef.current) {
                 const rect = pageContainerRef.current.getBoundingClientRect();
-                setContainerWidth(rect.width - 32); // padding
+                setContainerWidth(rect.width - 32); // horizontal padding
+                setContainerHeight(rect.height - 32); // vertical padding
             }
         };
-        updateWidth();
-        window.addEventListener('resize', updateWidth);
-        return () => window.removeEventListener('resize', updateWidth);
+        updateDimensions();
+        window.addEventListener('resize', updateDimensions);
+        return () => window.removeEventListener('resize', updateDimensions);
     }, [isFullscreen]);
+
+    // Calculate the page width that fits the full page inside the container
+    const fittedPageWidth = (() => {
+        // Width if we constrain by container width
+        const widthConstrained = containerWidth;
+        // Width if we constrain by container height (using aspect ratio)
+        const heightConstrained = containerHeight * pageAspectRatio;
+        // Pick the smaller one so the page fits both dimensions
+        return Math.min(widthConstrained, heightConstrained);
+    })();
+
+    // Callback when a page finishes rendering — capture its natural aspect ratio
+    const onPageRenderSuccess = useCallback((page: any) => {
+        if (page && page.width && page.height) {
+            setPageAspectRatio(page.width / page.height);
+        }
+    }, []);
 
     // Keyboard navigation
     useEffect(() => {
@@ -259,7 +279,7 @@ const PDFSlideshow: React.FC<PDFSlideshowProps> = ({
             {/* PDF Page Area */}
             <div
                 ref={pageContainerRef}
-                className={`flex-1 relative bg-zinc-800/50 flex items-center justify-center overflow-hidden ${isFullscreen ? 'min-h-0' : 'min-h-[400px] max-h-[70vh]'
+                className={`flex-1 relative bg-zinc-800/50 flex items-center justify-center overflow-hidden ${isFullscreen ? 'min-h-0' : 'h-[70vh]'
                     }`}
                 onTouchStart={onTouchStart}
                 onTouchMove={onTouchMove}
@@ -293,11 +313,12 @@ const PDFSlideshow: React.FC<PDFSlideshowProps> = ({
                     >
                         <Page
                             pageNumber={currentPage}
-                            width={containerWidth * scale}
+                            width={fittedPageWidth * scale}
                             renderTextLayer={true}
                             renderAnnotationLayer={true}
                             className="shadow-2xl shadow-black/50 rounded"
                             loading={null}
+                            onRenderSuccess={onPageRenderSuccess}
                         />
                     </Document>
                 </div>
