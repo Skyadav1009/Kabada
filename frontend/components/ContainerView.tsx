@@ -7,6 +7,7 @@ import Button from './Button';
 import { useToast } from './Toast';
 import ShareModal from './ShareModal';
 import SettingsModal from './SettingsModal';
+import PDFSlideshow from './PDFSlideshow';
 import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown, FolderUp, Search, Plus, Settings, Pin, PinOff } from 'lucide-react';
 
 // Socket.IO server URL (matches API_BASE without /api)
@@ -1222,11 +1223,13 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
                 </div>
               )}
 
-              {previewFile.type === 'application/pdf' && (
-                <iframe
-                  src={getFileDownloadUrl(container.id, previewFile.id)}
-                  className="w-full h-[80vh]"
-                  title={previewFile.name}
+              {(previewFile.type === 'application/pdf' || previewFile.name.toLowerCase().endsWith('.pdf')) && (
+                <PDFSlideshow
+                  url={getFileDownloadUrl(container.id, previewFile.id)}
+                  fileName={previewFile.name}
+                  fileSize={formatFileSize(previewFile.size)}
+                  onClose={() => setPreviewFile(null)}
+                  onDownload={() => handleDownload(previewFile)}
                 />
               )}
             </div>
