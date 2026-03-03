@@ -97,3 +97,42 @@ export interface GitHubRepoInfo {
   isTooBig: boolean;
   defaultBranch: string;
 }
+
+export interface GitHubCommitResult {
+  success: boolean;
+  commitSha: string;
+  commitUrl: string;
+  content: {
+    sha: string;
+    path: string;
+  };
+}
+
+// ─── AI Agent Types ──────────────────────────────────────────────────
+export interface AgentFileChange {
+  action: 'edit' | 'create';
+  path: string;
+  content: string;
+}
+
+export interface AgentMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  fileChanges?: AgentFileChange[];
+  timestamp: number;
+}
+
+export interface AgentResponse {
+  reply: string;
+  fileChanges: AgentFileChange[];
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
+
+export interface AgentRepoContext {
+  fileTree: string;
+  fileContents: string;
+}

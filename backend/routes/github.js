@@ -550,4 +550,142 @@ router.get('/info', async (req, res) => {
     }
 });
 
+// ─── ROUTE: POST /api/github/commit ──────────────────────────────────
+// Commit (create or update) a single file to a GitHub repo.
+router.post('/commit', async (req, res) => {
+    try {
+        const { owner, repo, branch, filePath, content, commitMessage, token } = req.body;
+
+        // Validate required fields
+        if (!owner || !repo || !branch || !filePath || content === undefined || !commitMessage || !token) {
+            return res.status(400).json({
+                error: 'Missing required fields: owner, repo, branch, filePath, content, commitMessage, token',
+            });
+        }
+
+        // Validate owner/repo format
+        const validPattern = /^[a-zA-Z0-9._-]+$/;
+        if (!validPattern.test(owner) || !validPattern.test(repo)) {
+            return res.status(400).json({ error: 'Invalid owner or repo name' });
+        }
+
+        // Sanitize file path
+        const safePath = sanitizePath(filePath);
+        if (!safePath) {
+            return res.status(400).json({ error: 'Invalid file path' });
+        }
+
+        const githubHeaders = {
+            Authorization: `token ${token}`,
+            Accept: 'application/vnd.github.v3+json',
+            'User-Agent': 'Kabada-GitHub-IDE/1.0',
+        };
+
+        // 1. Get current file SHA (needed for updates, not for new files)
+        let currentSha = null;
+        try {
+            const fileInfo = await fetchJson(
+                `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(safePath)}?ref=${encodeURIComponent(branch)}`,
+                githubHeaders
+            );
+            currentSha = fileInfo.sha;
+        } catch (err) {
+            // File doesn't exist yet — that's fine, we'll create it
+            console.log(`File ${safePath} not found in ${owner}/${repo}, will create new file`);
+        }
+
+        // 2. Encode content to base64
+        const contentBase64 = Buffer.from(content, 'utf-8').toString('base64');
+
+        // 3. Create or update the file via GitHub API
+        const putBody = {
+            message: commitMessage,
+            content: contentBase64,
+            branch: branch,
+        };
+        if (currentSha) {
+            putBody.sha = currentSha;
+        }
+
+        const putUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(safePath)}`;
+
+        // Use https to make a PUT request
+        const result = await new Promise((resolve, reject) => {
+            const bodyStr = JSON.stringify(putBody);
+            const urlObj = new URL(putUrl);
+
+            const options = {
+                hostname: urlObj.hostname,
+                path: urlObj.pathname + urlObj.search,
+                method: 'PUT',
+                headers: {
+                    ...githubHeaders,
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(bodyStr),
+                },
+            };
+
+            const request = https.request(options, (response) => {
+                let data = '';
+                response.on('data', (chunk) => { data += chunk; });
+                response.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (response.statusCode >= 200 && response.statusCode < 300) {
+                            resolve(parsed);
+                        } else {
+                            reject(new Error(parsed.message || `GitHub API error: ${response.statusCode}`));
+                        }
+                    } catch (e) {
+                        reject(new Error(`Failed to parse GitHub response (${response.statusCode})`));
+                    }
+                });
+                response.on('error', reject);
+            });
+
+            request.on('error', reject);
+            request.write(bodyStr);
+            request.end();
+        });
+
+        console.log(`✅ GitHub commit: ${safePath} → ${owner}/${repo}@${branch}`);
+
+        res.json({
+            success: true,
+            commitSha: result.commit?.sha || '',
+            commitUrl: result.commit?.html_url || `https://github.com/${owner}/${repo}/commit/${result.commit?.sha || ''}`,
+            content: {
+                sha: result.content?.sha || '',
+                path: result.content?.path || safePath,
+            },
+        });
+    } catch (error) {
+        console.error('GitHub commit error:', error);
+
+        // Provide user-friendly error messages
+        const msg = error.message || 'Failed to commit to GitHub';
+        let statusCode = 500;
+        if (msg.includes('Bad credentials') || msg.includes('401')) {
+            statusCode = 401;
+        } else if (msg.includes('Not Found') || msg.includes('404')) {
+            statusCode = 404;
+        } else if (msg.includes('409') || msg.includes('conflict')) {
+            statusCode = 409;
+        } else if (msg.includes('403') || msg.includes('forbidden')) {
+            statusCode = 403;
+        }
+
+        res.status(statusCode).json({
+            error: msg,
+            details: statusCode === 401
+                ? 'Invalid GitHub token. Make sure your Personal Access Token has the "repo" scope.'
+                : statusCode === 403
+                    ? 'Permission denied. Your token may not have write access to this repository.'
+                    : statusCode === 404
+                        ? 'Repository or branch not found.'
+                        : 'Failed to commit changes. Please try again.',
+        });
+    }
+});
+
 module.exports = router;

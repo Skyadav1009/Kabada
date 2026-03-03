@@ -9,6 +9,7 @@ const { Server } = require('socket.io');
 const containerRoutes = require('./routes/containers');
 const adminRoutes = require('./routes/admin');
 const githubRoutes = require('./routes/github');
+const agentRoutes = require('./routes/agent');
 const { initDiscordBot } = require('./discordBot');
 
 const app = express();
@@ -96,6 +97,7 @@ app.set('io', io);
 app.use('/api/containers', containerRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/github', githubRoutes);
+app.use('/api/agent', agentRoutes);
 
 // Health check with database status
 app.get('/api/health', (req, res) => {

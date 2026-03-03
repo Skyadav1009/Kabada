@@ -1,4 +1,4 @@
-import { Container, ContainerSummary, FileMeta, Message, Clipboard, GitHubImportResult, GitHubRepoInfo } from '../types';
+import { Container, ContainerSummary, FileMeta, Message, Clipboard, GitHubImportResult, GitHubRepoInfo, GitHubCommitResult, AgentResponse, AgentRepoContext } from '../types';
 
 // Use environment variable for API base URL, fallback to production
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -422,4 +422,33 @@ export const getGitHubRepoInfo = async (repoUrl: string): Promise<GitHubRepoInfo
   return await apiRequest<GitHubRepoInfo>(
     `/github/info?url=${encodeURIComponent(repoUrl)}`
   );
+};
+
+// --- GitHub Commit/Push API ---
+export const commitToGitHub = async (
+  owner: string,
+  repo: string,
+  branch: string,
+  filePath: string,
+  content: string,
+  commitMessage: string,
+  token: string
+): Promise<GitHubCommitResult> => {
+  return await apiRequest<GitHubCommitResult>('/github/commit', {
+    method: 'POST',
+    body: JSON.stringify({ owner, repo, branch, filePath, content, commitMessage, token }),
+  });
+};
+
+// --- AI Agent APIs ---
+export const sendAgentMessage = async (
+  message: string,
+  repoContext: AgentRepoContext,
+  chatHistory: { role: string; content: string }[],
+  repoInfo: { owner: string; repo: string; branch: string }
+): Promise<AgentResponse> => {
+  return await apiRequest<AgentResponse>('/agent/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, repoContext, chatHistory, repoInfo }),
+  });
 };

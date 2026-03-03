@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Container, FileMeta, GitHubImportResult } from '../types';
-import { getContainerById, getFileDownloadUrl } from '../services/storageService';
+import { Container, FileMeta, GitHubImportResult, AgentMessage, AgentFileChange, AgentRepoContext } from '../types';
+import { getContainerById, getFileDownloadUrl, commitToGitHub, sendAgentMessage } from '../services/storageService';
 import { WebContainer, FileSystemTree } from '@webcontainer/api';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -10,7 +10,8 @@ import {
     Copy, Check, ExternalLink, GitBranch, Star, X, Menu,
     Code2, FileCode, FileJson, Image, File as FileIcon, Download,
     Share2, Play, Square, Terminal, Eye, GripHorizontal,
-    RefreshCw, Loader2, AlertCircle
+    RefreshCw, Loader2, AlertCircle, Edit3, Save, GitCommit,
+    Key, MessageSquare, Bot, Send, Sparkles, FileEdit, FilePlus
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -28,7 +29,7 @@ interface GitHubSandboxProps {
     onClose: () => void;
 }
 
-type BottomPanelTab = 'terminal' | 'preview';
+type BottomPanelTab = 'terminal' | 'preview' | 'agent';
 type ContainerStatus = 'idle' | 'booting' | 'mounting' | 'installing' | 'running' | 'error' | 'ready';
 
 // ─── Helper functions ────────────────────────────────────────────────
@@ -336,6 +337,26 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
     const [copied, setCopied] = useState(false);
     const [showSidebar, setShowSidebar] = useState(true);
     const [error, setError] = useState<string>('');
+
+    // Edit & Push state
+    const [isEditing, setIsEditing] = useState(false);
+    const [editedContent, setEditedContent] = useState<string>('');
+    const [modifiedFiles, setModifiedFiles] = useState<Set<string>>(new Set());
+    const [showCommitModal, setShowCommitModal] = useState(false);
+    const [commitMessage, setCommitMessage] = useState('');
+    const [githubToken, setGithubToken] = useState('');
+    const [isCommitting, setIsCommitting] = useState(false);
+    const [commitError, setCommitError] = useState('');
+    const [commitSuccess, setCommitSuccess] = useState('');
+    const editorRef = useRef<HTMLTextAreaElement | null>(null);
+
+    // AI Agent state
+    const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
+    const [agentInput, setAgentInput] = useState('');
+    const [agentLoading, setAgentLoading] = useState(false);
+    const agentChatRef = useRef<HTMLDivElement | null>(null);
+    const agentInputRef = useRef<HTMLInputElement | null>(null);
+    const agentFileCache = useRef<Map<string, string>>(new Map());
 
     // Bottom panel state
     const [bottomPanel, setBottomPanel] = useState<BottomPanelTab | null>(null);
@@ -713,11 +734,279 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
     }, []);
 
     const handleSelectFile = useCallback((node: TreeNode) => {
+        // If we're editing and have unsaved changes, confirm before switching
+        if (isEditing && selectedFile && modifiedFiles.has(selectedFile.path)) {
+            const confirm = window.confirm('You have unsaved changes. Switch file anyway?');
+            if (!confirm) return;
+        }
+        setIsEditing(false);
         setSelectedFile(node);
         if (window.innerWidth < 768) {
             setShowSidebar(false);
         }
-    }, []);
+    }, [isEditing, selectedFile, modifiedFiles]);
+
+    // ─── Edit & Push handlers ────────────────────────────────────────
+
+    const handleToggleEdit = useCallback(() => {
+        if (!isEditing) {
+            // Enter edit mode
+            setEditedContent(fileContent);
+            setIsEditing(true);
+            setTimeout(() => editorRef.current?.focus(), 50);
+        } else {
+            // Exit edit mode
+            if (selectedFile && modifiedFiles.has(selectedFile.path)) {
+                const confirm = window.confirm('Discard unsaved changes?');
+                if (!confirm) return;
+                // Revert: remove from modified set
+                setModifiedFiles(prev => {
+                    const next = new Set(prev);
+                    next.delete(selectedFile.path);
+                    return next;
+                });
+            }
+            setIsEditing(false);
+        }
+    }, [isEditing, fileContent, selectedFile, modifiedFiles]);
+
+    const handleEditorChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const newContent = e.target.value;
+        setEditedContent(newContent);
+        if (selectedFile) {
+            if (newContent !== fileContent) {
+                setModifiedFiles(prev => {
+                    const next = new Set(prev);
+                    next.add(selectedFile.path);
+                    return next;
+                });
+            } else {
+                setModifiedFiles(prev => {
+                    const next = new Set(prev);
+                    next.delete(selectedFile.path);
+                    return next;
+                });
+            }
+        }
+    }, [selectedFile, fileContent]);
+
+    const handleOpenCommitModal = useCallback(() => {
+        if (!selectedFile) return;
+        const fileName = selectedFile.path.split('/').pop() || selectedFile.name;
+        setCommitMessage(`Update ${fileName}`);
+        setCommitError('');
+        setCommitSuccess('');
+        setShowCommitModal(true);
+    }, [selectedFile]);
+
+    const handleCommit = useCallback(async () => {
+        if (!selectedFile || !commitMessage.trim() || !githubToken.trim()) return;
+
+        setIsCommitting(true);
+        setCommitError('');
+        setCommitSuccess('');
+
+        try {
+            const result = await commitToGitHub(
+                importResult.repoInfo.owner,
+                importResult.repoInfo.repo,
+                importResult.repoInfo.branch,
+                selectedFile.path,
+                editedContent,
+                commitMessage.trim(),
+                githubToken.trim()
+            );
+
+            if (result.success) {
+                // Update the "original" content to match what we just pushed
+                setFileContent(editedContent);
+                setModifiedFiles(prev => {
+                    const next = new Set(prev);
+                    next.delete(selectedFile.path);
+                    return next;
+                });
+                setCommitSuccess(`Committed! ${result.commitSha.substring(0, 7)}`);
+                setTimeout(() => {
+                    setShowCommitModal(false);
+                    setCommitSuccess('');
+                }, 2000);
+            }
+        } catch (err: any) {
+            setCommitError(err.message || 'Failed to commit');
+        } finally {
+            setIsCommitting(false);
+        }
+    }, [selectedFile, commitMessage, githubToken, editedContent, importResult]);
+
+    const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        // Handle Tab key for indentation
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const textarea = e.currentTarget;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const value = textarea.value;
+            const newValue = value.substring(0, start) + '  ' + value.substring(end);
+            setEditedContent(newValue);
+            // Restore cursor position
+            setTimeout(() => {
+                textarea.selectionStart = textarea.selectionEnd = start + 2;
+            }, 0);
+            // Mark as modified
+            if (selectedFile && newValue !== fileContent) {
+                setModifiedFiles(prev => new Set(prev).add(selectedFile.path));
+            }
+        }
+        // Ctrl+S to open commit modal
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            e.preventDefault();
+            if (selectedFile && modifiedFiles.has(selectedFile.path)) {
+                handleOpenCommitModal();
+            }
+        }
+    }, [selectedFile, fileContent, modifiedFiles, handleOpenCommitModal]);
+
+    // ─── AI Agent handlers ──────────────────────────────────────────
+
+    const buildRepoContext = useCallback(async (): Promise<AgentRepoContext> => {
+        if (!container) return { fileTree: '', fileContents: '' };
+
+        // Build file tree string (show full paths)
+        const tree = container.files
+            .filter(f => {
+                const path = (f.relativePath || f.originalName).toLowerCase();
+                return !path.includes('node_modules') && !path.includes('.git/');
+            })
+            .map(f => `  ${f.relativePath || f.originalName}`)
+            .join('\n');
+
+        // Key files to fetch and send to the LLM
+        const keyFileNames = [
+            'readme.md', 'readme', 'package.json', 'tsconfig.json',
+            'vite.config.ts', 'vite.config.js', 'next.config.js', 'next.config.ts',
+            '.env.example', 'index.html', 'app.js', 'app.ts',
+            'index.js', 'index.ts', 'main.js', 'main.ts',
+            'server.js', 'server.ts',
+        ];
+
+        const keyFiles = container.files.filter(f => {
+            const name = (f.relativePath || f.originalName).toLowerCase().split('/').pop() || '';
+            const path = (f.relativePath || f.originalName).toLowerCase();
+            return keyFileNames.includes(name) && !path.includes('node_modules');
+        });
+
+        // Fetch actual content for key files (with caching)
+        let fileContents = '';
+        const TOKEN_BUDGET = 12000; // ~12K chars of file content to send
+        let usedChars = 0;
+
+        for (const kf of keyFiles.slice(0, 8)) {
+            if (usedChars >= TOKEN_BUDGET) break;
+
+            const filePath = kf.relativePath || kf.originalName;
+            let content = agentFileCache.current.get(filePath);
+
+            if (!content) {
+                try {
+                    const url = getFileDownloadUrl(container.id, kf.id);
+                    const response = await fetch(url);
+                    if (response.ok) {
+                        content = await response.text();
+                        // Cache it
+                        agentFileCache.current.set(filePath, content);
+                    }
+                } catch { /* skip this file */ }
+            }
+
+            if (content) {
+                const truncated = content.substring(0, Math.min(content.length, TOKEN_BUDGET - usedChars));
+                fileContents += `\n━━━ ${filePath} ━━━\n${truncated}\n`;
+                usedChars += truncated.length;
+            }
+        }
+
+        // Always include the currently open file content (most important context)
+        if (selectedFile && fileContent && fileContent !== '__BINARY__') {
+            const alreadyIncluded = keyFiles.some(kf =>
+                (kf.relativePath || kf.originalName) === selectedFile.path
+            );
+            if (!alreadyIncluded) {
+                fileContents += `\n━━━ ${selectedFile.path} (currently open & editing) ━━━\n${fileContent.substring(0, 6000)}\n`;
+            }
+        }
+
+        return { fileTree: tree, fileContents };
+    }, [container, selectedFile, fileContent]);
+
+    const handleSendAgentMessage = useCallback(async () => {
+        if (!agentInput.trim() || agentLoading) return;
+
+        const userMessage = agentInput.trim();
+        setAgentInput('');
+
+        // Add user message
+        const userMsg: AgentMessage = {
+            role: 'user',
+            content: userMessage,
+            timestamp: Date.now(),
+        };
+        setAgentMessages(prev => [...prev, userMsg]);
+        setAgentLoading(true);
+
+        // Auto-scroll
+        setTimeout(() => agentChatRef.current?.scrollTo({ top: agentChatRef.current.scrollHeight, behavior: 'smooth' }), 100);
+
+        try {
+            const context = await buildRepoContext();
+            const history = agentMessages.map(m => ({ role: m.role, content: m.content }));
+            const { repoInfo } = importResult;
+
+            const response = await sendAgentMessage(
+                userMessage,
+                context,
+                history,
+                { owner: repoInfo.owner, repo: repoInfo.repo, branch: repoInfo.branch }
+            );
+
+            const assistantMsg: AgentMessage = {
+                role: 'assistant',
+                content: response.reply,
+                fileChanges: response.fileChanges.length > 0 ? response.fileChanges : undefined,
+                timestamp: Date.now(),
+            };
+            setAgentMessages(prev => [...prev, assistantMsg]);
+        } catch (err: any) {
+            const errorMsg: AgentMessage = {
+                role: 'assistant',
+                content: `❌ Error: ${err.message || 'Failed to reach the agent'}`,
+                timestamp: Date.now(),
+            };
+            setAgentMessages(prev => [...prev, errorMsg]);
+        } finally {
+            setAgentLoading(false);
+            setTimeout(() => agentChatRef.current?.scrollTo({ top: agentChatRef.current.scrollHeight, behavior: 'smooth' }), 100);
+        }
+    }, [agentInput, agentLoading, agentMessages, buildRepoContext, importResult]);
+
+    const handleApplyFileChange = useCallback((fc: AgentFileChange) => {
+        // Find the file in the tree and select it, then apply content
+        const matchingNode = fileTree.find(n => n.type === 'file' && n.path === fc.path);
+        if (matchingNode) {
+            setSelectedFile(matchingNode);
+        }
+
+        // Set the file content and enter edit mode
+        setFileContent(fc.content);
+        setEditedContent(fc.content);
+        setIsEditing(true);
+
+        // Mark as modified so user can commit & push
+        setModifiedFiles(prev => {
+            const next = new Set(prev);
+            next.add(fc.path);
+            return next;
+        });
+    }, [fileTree]);
 
     const handleCopyUrl = useCallback(() => {
         const url = `${window.location.origin}${window.location.pathname}${importResult.sandboxUrl}`;
@@ -822,423 +1111,736 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
     const { repoInfo } = importResult;
 
     return (
-        <div className="flex flex-col h-[calc(100vh-64px)] bg-zinc-950">
-            {/* Top Bar */}
-            <div className="flex items-center justify-between px-3 py-2 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
-                <div className="flex items-center gap-3 min-w-0">
-                    {/* Mobile menu toggle */}
-                    <button
-                        onClick={() => setShowSidebar(!showSidebar)}
-                        className="md:hidden p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400"
-                    >
-                        <Menu className="h-5 w-5" />
-                    </button>
+        <>
+            <div className="flex flex-col h-[calc(100vh-64px)] bg-zinc-950">
+                {/* Top Bar */}
+                <div className="flex items-center justify-between px-3 py-2 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                        {/* Mobile menu toggle */}
+                        <button
+                            onClick={() => setShowSidebar(!showSidebar)}
+                            className="md:hidden p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400"
+                        >
+                            <Menu className="h-5 w-5" />
+                        </button>
 
-                    {/* Repo info */}
-                    <div className="flex items-center gap-2 min-w-0">
-                        <GitBranch className="h-4 w-4 text-amber-500 flex-shrink-0" />
-                        <span className="text-zinc-300 font-medium truncate text-sm">
-                            <span className="text-zinc-500">{repoInfo.owner}</span>
-                            <span className="text-zinc-600 mx-0.5">/</span>
-                            <span className="text-white">{repoInfo.repo}</span>
-                        </span>
-                        <span className="text-xs text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full hidden sm:inline">
-                            {repoInfo.branch}
-                        </span>
-                        {repoInfo.language && (
-                            <span className="text-xs text-amber-400/80 bg-amber-500/10 px-2 py-0.5 rounded-full hidden sm:inline">
-                                {repoInfo.language}
+                        {/* Repo info */}
+                        <div className="flex items-center gap-2 min-w-0">
+                            <GitBranch className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                            <span className="text-zinc-300 font-medium truncate text-sm">
+                                <span className="text-zinc-500">{repoInfo.owner}</span>
+                                <span className="text-zinc-600 mx-0.5">/</span>
+                                <span className="text-white">{repoInfo.repo}</span>
+                            </span>
+                            <span className="text-xs text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full hidden sm:inline">
+                                {repoInfo.branch}
+                            </span>
+                            {repoInfo.language && (
+                                <span className="text-xs text-amber-400/80 bg-amber-500/10 px-2 py-0.5 rounded-full hidden sm:inline">
+                                    {repoInfo.language}
+                                </span>
+                            )}
+                            {repoInfo.stars > 0 && (
+                                <span className="flex items-center gap-1 text-xs text-zinc-500 hidden sm:flex">
+                                    <Star className="h-3 w-3" /> {repoInfo.stars.toLocaleString()}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        {/* Status badge */}
+                        {containerStatus !== 'idle' && statusBadge.text && (
+                            <span className={`flex items-center gap-1.5 text-xs ${statusBadge.color} hidden sm:flex`}>
+                                {statusBadge.icon}
+                                {statusBadge.text}
                             </span>
                         )}
-                        {repoInfo.stars > 0 && (
-                            <span className="flex items-center gap-1 text-xs text-zinc-500 hidden sm:flex">
-                                <Star className="h-3 w-3" /> {repoInfo.stars.toLocaleString()}
-                            </span>
+
+                        {/* Run / Stop button */}
+                        {containerStatus === 'idle' ? (
+                            <button
+                                onClick={bootWebContainer}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors font-medium"
+                                title="Boot WebContainer and run the project"
+                            >
+                                <Play className="h-3.5 w-3.5" />
+                                Run
+                            </button>
+                        ) : containerStatus === 'error' ? (
+                            <button
+                                onClick={() => { stopWebContainer(); }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 text-white rounded-lg hover:bg-red-500 transition-colors font-medium"
+                            >
+                                <RefreshCw className="h-3.5 w-3.5" />
+                                Retry
+                            </button>
+                        ) : (
+                            <button
+                                onClick={stopWebContainer}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 text-white rounded-lg hover:bg-red-500 transition-colors font-medium"
+                                title="Stop WebContainer"
+                            >
+                                <Square className="h-3 w-3" />
+                                Stop
+                            </button>
                         )}
+
+                        {/* Commit & Push button */}
+                        {modifiedFiles.size > 0 && (
+                            <button
+                                onClick={handleOpenCommitModal}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition-colors font-medium animate-pulse hover:animate-none"
+                                title="Commit & push changes to GitHub"
+                            >
+                                <GitCommit className="h-3.5 w-3.5" />
+                                Commit & Push
+                                <span className="bg-amber-500/50 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                                    {modifiedFiles.size}
+                                </span>
+                            </button>
+                        )}
+
+                        <span className="text-xs text-zinc-600 hidden sm:inline">
+                            {importResult.fileCount} files
+                        </span>
+                        <button
+                            onClick={handleCopyUrl}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg hover:bg-zinc-700 transition-colors border border-zinc-700"
+                        >
+                            {copied ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Share2 className="h-3.5 w-3.5" />}
+                            {copied ? 'Copied!' : 'Share'}
+                        </button>
+                        <a
+                            href={`https://github.com/${repoInfo.owner}/${repoInfo.repo}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg hover:bg-zinc-700 transition-colors border border-zinc-700"
+                        >
+                            <ExternalLink className="h-3.5 w-3.5" /> GitHub
+                        </a>
+                        <button
+                            onClick={onClose}
+                            className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+                        >
+                            <X className="h-5 w-5" />
+                        </button>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                    {/* Status badge */}
-                    {containerStatus !== 'idle' && statusBadge.text && (
-                        <span className={`flex items-center gap-1.5 text-xs ${statusBadge.color} hidden sm:flex`}>
-                            {statusBadge.icon}
-                            {statusBadge.text}
-                        </span>
-                    )}
-
-                    {/* Run / Stop button */}
-                    {containerStatus === 'idle' ? (
-                        <button
-                            onClick={bootWebContainer}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors font-medium"
-                            title="Boot WebContainer and run the project"
-                        >
-                            <Play className="h-3.5 w-3.5" />
-                            Run
-                        </button>
-                    ) : containerStatus === 'error' ? (
-                        <button
-                            onClick={() => { stopWebContainer(); }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 text-white rounded-lg hover:bg-red-500 transition-colors font-medium"
-                        >
-                            <RefreshCw className="h-3.5 w-3.5" />
-                            Retry
-                        </button>
-                    ) : (
-                        <button
-                            onClick={stopWebContainer}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 text-white rounded-lg hover:bg-red-500 transition-colors font-medium"
-                            title="Stop WebContainer"
-                        >
-                            <Square className="h-3 w-3" />
-                            Stop
-                        </button>
-                    )}
-
-                    <span className="text-xs text-zinc-600 hidden sm:inline">
-                        {importResult.fileCount} files
-                    </span>
-                    <button
-                        onClick={handleCopyUrl}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg hover:bg-zinc-700 transition-colors border border-zinc-700"
+                {/* Main Content */}
+                <div className="flex flex-1 overflow-hidden" ref={mainContentRef}>
+                    {/* Sidebar - File Tree */}
+                    <div
+                        className={`${showSidebar ? 'w-64 lg:w-72' : 'w-0'
+                            } flex-shrink-0 bg-zinc-900/50 border-r border-zinc-800 overflow-hidden transition-all duration-200 ${showSidebar ? 'md:block' : ''
+                            } ${showSidebar ? 'absolute md:relative z-20 inset-y-0 left-0 mt-[41px] md:mt-0' : ''}`}
+                        style={showSidebar ? { minWidth: window.innerWidth < 768 ? '256px' : undefined } : {}}
                     >
-                        {copied ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Share2 className="h-3.5 w-3.5" />}
-                        {copied ? 'Copied!' : 'Share'}
-                    </button>
-                    <a
-                        href={`https://github.com/${repoInfo.owner}/${repoInfo.repo}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg hover:bg-zinc-700 transition-colors border border-zinc-700"
-                    >
-                        <ExternalLink className="h-3.5 w-3.5" /> GitHub
-                    </a>
-                    <button
-                        onClick={onClose}
-                        className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
-                    >
-                        <X className="h-5 w-5" />
-                    </button>
-                </div>
-            </div>
-
-            {/* Main Content */}
-            <div className="flex flex-1 overflow-hidden" ref={mainContentRef}>
-                {/* Sidebar - File Tree */}
-                <div
-                    className={`${showSidebar ? 'w-64 lg:w-72' : 'w-0'
-                        } flex-shrink-0 bg-zinc-900/50 border-r border-zinc-800 overflow-hidden transition-all duration-200 ${showSidebar ? 'md:block' : ''
-                        } ${showSidebar ? 'absolute md:relative z-20 inset-y-0 left-0 mt-[41px] md:mt-0' : ''}`}
-                    style={showSidebar ? { minWidth: window.innerWidth < 768 ? '256px' : undefined } : {}}
-                >
-                    <div className="h-full overflow-y-auto scrollbar-thin">
-                        <div className="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-800/50">
-                            Explorer
-                        </div>
-                        <div className="py-1">
-                            {fileTree.map((node) => (
-                                <TreeItem
-                                    key={node.path}
-                                    node={node}
-                                    depth={0}
-                                    selectedPath={selectedFile?.path || null}
-                                    expandedDirs={expandedDirs}
-                                    onToggleDir={handleToggleDir}
-                                    onSelectFile={handleSelectFile}
-                                />
-                            ))}
+                        <div className="h-full overflow-y-auto scrollbar-thin">
+                            <div className="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-800/50">
+                                Explorer
+                            </div>
+                            <div className="py-1">
+                                {fileTree.map((node) => (
+                                    <TreeItem
+                                        key={node.path}
+                                        node={node}
+                                        depth={0}
+                                        selectedPath={selectedFile?.path || null}
+                                        expandedDirs={expandedDirs}
+                                        onToggleDir={handleToggleDir}
+                                        onSelectFile={handleSelectFile}
+                                    />
+                                ))}
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                {/* Mobile sidebar overlay */}
-                {showSidebar && (
-                    <div
-                        className="md:hidden fixed inset-0 bg-black/50 z-10"
-                        onClick={() => setShowSidebar(false)}
-                    />
-                )}
+                    {/* Mobile sidebar overlay */}
+                    {showSidebar && (
+                        <div
+                            className="md:hidden fixed inset-0 bg-black/50 z-10"
+                            onClick={() => setShowSidebar(false)}
+                        />
+                    )}
 
-                {/* Right side: Code + Bottom Panel */}
-                <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-                    {/* Code Viewer */}
-                    <div
-                        className="flex-1 flex flex-col overflow-hidden min-w-0"
-                        style={bottomPanel ? { height: `${100 - panelHeight}%`, flex: 'none' } : {}}
-                    >
-                        {selectedFile ? (
-                            <>
-                                {/* File Tab Bar */}
-                                <div className="flex items-center px-3 py-1.5 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
-                                    <div className="flex items-center gap-1.5 text-sm px-2 py-1 bg-zinc-800 rounded text-zinc-300 max-w-full">
-                                        {getFileIcon(selectedFile.name)}
-                                        <span className="truncate">{selectedFile.path}</span>
-                                    </div>
-                                    {selectedFile.file && (
-                                        <span className="text-xs text-zinc-600 ml-2 hidden sm:inline">
-                                            {formatFileSize(selectedFile.file.size)}
-                                        </span>
-                                    )}
-                                    {selectedFile.file && (
-                                        <a
-                                            href={getFileDownloadUrl(container.id, selectedFile.file.id, true)}
-                                            className="ml-auto p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors"
-                                            title="Download file"
-                                        >
-                                            <Download className="h-4 w-4" />
-                                        </a>
-                                    )}
-                                </div>
-
-                                {/* File Content */}
-                                <div className="flex-1 overflow-auto bg-zinc-950">
-                                    {fileLoading ? (
-                                        <div className="flex items-center justify-center h-full">
-                                            <svg className="animate-spin h-6 w-6 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                            </svg>
+                    {/* Right side: Code + Bottom Panel */}
+                    <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+                        {/* Code Viewer */}
+                        <div
+                            className="flex-1 flex flex-col overflow-hidden min-w-0"
+                            style={bottomPanel ? { height: `${100 - panelHeight}%`, flex: 'none' } : {}}
+                        >
+                            {selectedFile ? (
+                                <>
+                                    {/* File Tab Bar */}
+                                    <div className="flex items-center px-3 py-1.5 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
+                                        <div className="flex items-center gap-1.5 text-sm px-2 py-1 bg-zinc-800 rounded text-zinc-300 max-w-full">
+                                            {getFileIcon(selectedFile.name)}
+                                            <span className="truncate">{selectedFile.path}</span>
+                                            {modifiedFiles.has(selectedFile.path) && (
+                                                <span className="h-2 w-2 rounded-full bg-amber-400 flex-shrink-0" title="Modified" />
+                                            )}
                                         </div>
-                                    ) : fileContent === '__BINARY__' ? (
-                                        <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-                                            <FileIcon className="h-16 w-16 mb-4 text-zinc-600" />
-                                            <p className="text-lg font-medium mb-2">Binary File</p>
-                                            <p className="text-sm mb-4">This file cannot be displayed as text.</p>
+                                        {selectedFile.file && (
+                                            <span className="text-xs text-zinc-600 ml-2 hidden sm:inline">
+                                                {formatFileSize(selectedFile.file.size)}
+                                            </span>
+                                        )}
+                                        <div className="ml-auto flex items-center gap-1">
+                                            {/* Edit toggle - only for text files */}
+                                            {isTextFile(selectedFile.name) && fileContent !== '__BINARY__' && (
+                                                <button
+                                                    onClick={handleToggleEdit}
+                                                    className={`flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${isEditing
+                                                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                                        : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+                                                        }`}
+                                                    title={isEditing ? 'Exit edit mode' : 'Edit file'}
+                                                >
+                                                    <Edit3 className="h-3.5 w-3.5" />
+                                                    {isEditing ? 'Editing' : 'Edit'}
+                                                </button>
+                                            )}
+                                            {/* Commit button for modified file */}
+                                            {isEditing && modifiedFiles.has(selectedFile.path) && (
+                                                <button
+                                                    onClick={handleOpenCommitModal}
+                                                    className="flex items-center gap-1 px-2 py-1 text-xs bg-green-600/20 text-green-400 rounded border border-green-500/30 hover:bg-green-600/30 transition-colors"
+                                                    title="Commit & push this file (Ctrl+S)"
+                                                >
+                                                    <Save className="h-3.5 w-3.5" />
+                                                    Push
+                                                </button>
+                                            )}
                                             {selectedFile.file && (
                                                 <a
                                                     href={getFileDownloadUrl(container.id, selectedFile.file.id, true)}
-                                                    className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors border border-amber-500/30"
+                                                    className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors"
+                                                    title="Download file"
                                                 >
                                                     <Download className="h-4 w-4" />
-                                                    Download ({formatFileSize(selectedFile.file.size)})
                                                 </a>
                                             )}
                                         </div>
-                                    ) : (
-                                        <div className="relative">
-                                            <pre className="text-sm font-mono leading-relaxed overflow-x-auto">
-                                                <table className="w-full border-collapse">
-                                                    <tbody>
-                                                        {fileContent.split('\n').map((line, i) => (
-                                                            <tr key={i} className="hover:bg-zinc-900/50">
-                                                                <td className="text-right pr-4 pl-4 py-0 select-none text-zinc-600 text-xs w-12 align-top sticky left-0 bg-zinc-950">
-                                                                    {i + 1}
-                                                                </td>
-                                                                <td className="pr-4 py-0 text-zinc-300 whitespace-pre">
-                                                                    <span dangerouslySetInnerHTML={{
-                                                                        __html: highlightCode(line, language)
-                                                                    }} />
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </pre>
+                                    </div>
+
+                                    {/* File Content */}
+                                    <div className="flex-1 overflow-auto bg-zinc-950">
+                                        {fileLoading ? (
+                                            <div className="flex items-center justify-center h-full">
+                                                <svg className="animate-spin h-6 w-6 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                            </div>
+                                        ) : fileContent === '__BINARY__' ? (
+                                            <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+                                                <FileIcon className="h-16 w-16 mb-4 text-zinc-600" />
+                                                <p className="text-lg font-medium mb-2">Binary File</p>
+                                                <p className="text-sm mb-4">This file cannot be displayed as text.</p>
+                                                {selectedFile.file && (
+                                                    <a
+                                                        href={getFileDownloadUrl(container.id, selectedFile.file.id, true)}
+                                                        className="flex items-center gap-2 px-4 py-2 bg-amber-500/20 text-amber-400 rounded-lg hover:bg-amber-500/30 transition-colors border border-amber-500/30"
+                                                    >
+                                                        <Download className="h-4 w-4" />
+                                                        Download ({formatFileSize(selectedFile.file.size)})
+                                                    </a>
+                                                )}
+                                            </div>
+                                        ) : isEditing ? (
+                                            /* ─── Editable textarea mode ──── */
+                                            <div className="relative h-full flex">
+                                                {/* Line numbers gutter */}
+                                                <div className="flex-shrink-0 bg-zinc-950 border-r border-zinc-800/50 text-right pr-3 pl-4 pt-2 select-none text-zinc-600 text-xs font-mono leading-relaxed overflow-hidden" style={{ minWidth: '48px' }}>
+                                                    {editedContent.split('\n').map((_, i) => (
+                                                        <div key={i} style={{ height: '1.65em' }}>{i + 1}</div>
+                                                    ))}
+                                                </div>
+                                                {/* Textarea editor */}
+                                                <textarea
+                                                    ref={editorRef}
+                                                    value={editedContent}
+                                                    onChange={handleEditorChange}
+                                                    onKeyDown={handleKeyDown}
+                                                    className="flex-1 bg-zinc-950 text-zinc-300 text-sm font-mono leading-relaxed p-2 resize-none outline-none border-none overflow-auto"
+                                                    spellCheck={false}
+                                                    autoCapitalize="off"
+                                                    autoCorrect="off"
+                                                    style={{ tabSize: 2 }}
+                                                />
+                                            </div>
+                                        ) : (
+                                            /* ─── Read-only code view ──── */
+                                            <div className="relative">
+                                                <pre className="text-sm font-mono leading-relaxed overflow-x-auto">
+                                                    <table className="w-full border-collapse">
+                                                        <tbody>
+                                                            {fileContent.split('\n').map((line, i) => (
+                                                                <tr key={i} className="hover:bg-zinc-900/50">
+                                                                    <td className="text-right pr-4 pl-4 py-0 select-none text-zinc-600 text-xs w-12 align-top sticky left-0 bg-zinc-950">
+                                                                        {i + 1}
+                                                                    </td>
+                                                                    <td className="pr-4 py-0 text-zinc-300 whitespace-pre">
+                                                                        <span dangerouslySetInnerHTML={{
+                                                                            __html: highlightCode(line, language)
+                                                                        }} />
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </pre>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+                                    <Code2 className="h-16 w-16 mb-4 text-zinc-700" />
+                                    <h3 className="text-xl font-medium text-zinc-400 mb-2">
+                                        {repoInfo.owner}/{repoInfo.repo}
+                                    </h3>
+                                    {repoInfo.description && (
+                                        <p className="text-sm text-zinc-600 mb-4 max-w-md text-center">
+                                            {repoInfo.description}
+                                        </p>
+                                    )}
+                                    <p className="text-sm mb-4">Select a file from the explorer to view its contents</p>
+                                    {hasPackageJson && containerStatus === 'idle' && (
+                                        <button
+                                            onClick={bootWebContainer}
+                                            className="flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors font-medium text-sm mt-2"
+                                        >
+                                            <Play className="h-4 w-4" />
+                                            Run Project
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Resize Handle */}
+                        {bottomPanel && (
+                            <div
+                                className={`h-1 bg-zinc-800 cursor-row-resize flex items-center justify-center hover:bg-amber-500/50 transition-colors flex-shrink-0 group ${isResizing ? 'bg-amber-500/50' : ''}`}
+                                onMouseDown={handleResizeStart}
+                            >
+                                <GripHorizontal className="h-3 w-3 text-zinc-600 group-hover:text-amber-400 transition-colors" />
+                            </div>
+                        )}
+
+                        {/* Bottom Panel */}
+                        {bottomPanel && (
+                            <div
+                                className="flex flex-col bg-zinc-950 border-t border-zinc-800 overflow-hidden flex-shrink-0"
+                                style={{ height: `${panelHeight}%` }}
+                            >
+                                {/* Panel Tab Bar */}
+                                <div className="flex items-center px-2 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
+                                    <button
+                                        onClick={() => togglePanel('terminal')}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${bottomPanel === 'terminal'
+                                            ? 'text-amber-400 border-amber-400'
+                                            : 'text-zinc-500 border-transparent hover:text-zinc-300'
+                                            }`}
+                                    >
+                                        <Terminal className="h-3.5 w-3.5" />
+                                        Terminal
+                                    </button>
+                                    <button
+                                        onClick={() => togglePanel('preview')}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${bottomPanel === 'preview'
+                                            ? 'text-amber-400 border-amber-400'
+                                            : 'text-zinc-500 border-transparent hover:text-zinc-300'
+                                            }`}
+                                    >
+                                        <Eye className="h-3.5 w-3.5" />
+                                        Preview
+                                        {previewUrl && (
+                                            <span className="h-1.5 w-1.5 rounded-full bg-green-400 ml-1" />
+                                        )}
+                                    </button>
+
+                                    <button
+                                        onClick={() => togglePanel('agent')}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${bottomPanel === 'agent'
+                                            ? 'text-purple-400 border-purple-400'
+                                            : 'text-zinc-500 border-transparent hover:text-zinc-300'
+                                            }`}
+                                    >
+                                        <Bot className="h-3.5 w-3.5" />
+                                        Agent
+                                        {agentLoading && (
+                                            <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse" />
+                                        )}
+                                    </button>
+
+                                    <div className="ml-auto flex items-center gap-1">
+                                        {bottomPanel === 'preview' && previewUrl && (
+                                            <button
+                                                onClick={() => {
+                                                    if (iframeRef.current) {
+                                                        iframeRef.current.src = previewUrl;
+                                                    }
+                                                }}
+                                                className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
+                                                title="Refresh preview"
+                                            >
+                                                <RefreshCw className="h-3.5 w-3.5" />
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => setBottomPanel(null)}
+                                            className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
+                                            title="Close panel"
+                                        >
+                                            <X className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Panel Content */}
+                                <div className="flex-1 overflow-hidden relative">
+                                    {/* Terminal */}
+                                    <div
+                                        ref={terminalContainerRef}
+                                        className="absolute inset-0 p-1"
+                                        style={{ display: bottomPanel === 'terminal' ? 'block' : 'none' }}
+                                    />
+
+                                    {/* Preview */}
+                                    {bottomPanel === 'preview' && (
+                                        <div className="h-full flex flex-col">
+                                            {previewUrl ? (
+                                                <>
+                                                    {/* URL bar */}
+                                                    <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900/50 border-b border-zinc-800/50 flex-shrink-0">
+                                                        <div className="flex items-center gap-1.5 flex-1 bg-zinc-800 rounded-md px-3 py-1 text-xs text-zinc-400 font-mono truncate">
+                                                            <div className="h-2 w-2 rounded-full bg-green-400 flex-shrink-0" />
+                                                            {previewUrl}
+                                                        </div>
+                                                        <a
+                                                            href={previewUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
+                                                            title="Open in new tab"
+                                                        >
+                                                            <ExternalLink className="h-3.5 w-3.5" />
+                                                        </a>
+                                                    </div>
+                                                    <iframe
+                                                        ref={iframeRef}
+                                                        src={previewUrl}
+                                                        className="flex-1 w-full bg-white"
+                                                        // @ts-ignore — credentialless is a valid HTML attribute but not yet in React's types
+                                                        credentialless="true"
+                                                        title="Preview"
+                                                    />
+                                                </>
+                                            ) : (
+                                                <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+                                                    {containerStatus === 'idle' ? (
+                                                        <>
+                                                            <Eye className="h-12 w-12 mb-3 text-zinc-700" />
+                                                            <p className="text-sm font-medium text-zinc-400 mb-1">No preview available</p>
+                                                            <p className="text-xs text-zinc-600 mb-3">Click ▶ Run to start the dev server</p>
+                                                            {hasPackageJson && (
+                                                                <button
+                                                                    onClick={bootWebContainer}
+                                                                    className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors text-xs font-medium"
+                                                                >
+                                                                    <Play className="h-3.5 w-3.5" />
+                                                                    Run Project
+                                                                </button>
+                                                            )}
+                                                        </>
+                                                    ) : containerStatus === 'error' ? (
+                                                        <>
+                                                            <AlertCircle className="h-12 w-12 mb-3 text-red-500/60" />
+                                                            <p className="text-sm font-medium text-red-400 mb-1">Failed to start</p>
+                                                            <p className="text-xs text-zinc-600">{statusMessage}</p>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Loader2 className="h-10 w-10 mb-3 text-amber-500 animate-spin" />
+                                                            <p className="text-sm font-medium text-zinc-400 mb-1">Starting dev server...</p>
+                                                            <p className="text-xs text-zinc-600">{statusMessage}</p>
+                                                            <p className="text-xs text-zinc-700 mt-2">Check the Terminal tab for progress</p>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Agent Panel */}
+                                    {bottomPanel === 'agent' && (
+                                        <div className="absolute inset-0 flex flex-col bg-zinc-950">
+                                            {/* Chat Messages */}
+                                            <div ref={agentChatRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+                                                {agentMessages.length === 0 && (
+                                                    <div className="flex flex-col items-center justify-center h-full text-center">
+                                                        <div className="p-3 rounded-2xl bg-purple-500/10 mb-3">
+                                                            <Sparkles className="h-8 w-8 text-purple-400" />
+                                                        </div>
+                                                        <p className="text-sm font-medium text-zinc-300 mb-1">Kabada Agent</p>
+                                                        <p className="text-xs text-zinc-600 max-w-xs">
+                                                            Ask me anything about this repo. I can explain code, suggest edits, and create new files.
+                                                        </p>
+                                                    </div>
+                                                )}
+                                                {agentMessages.map((msg, idx) => (
+                                                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                                        <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${msg.role === 'user'
+                                                            ? 'bg-purple-600/20 text-purple-100 border border-purple-500/20'
+                                                            : 'bg-zinc-800/60 text-zinc-300 border border-zinc-700/50'
+                                                            }`}>
+                                                            <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                                                            {/* File Changes Cards */}
+                                                            {msg.fileChanges && msg.fileChanges.length > 0 && (
+                                                                <div className="mt-2 space-y-2">
+                                                                    {msg.fileChanges.map((fc, fi) => (
+                                                                        <div key={fi} className="bg-zinc-900/80 border border-zinc-700/50 rounded-lg overflow-hidden">
+                                                                            <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-800/50">
+                                                                                <div className="flex items-center gap-1.5 text-xs">
+                                                                                    {fc.action === 'create' ? (
+                                                                                        <FilePlus className="h-3.5 w-3.5 text-green-400" />
+                                                                                    ) : (
+                                                                                        <FileEdit className="h-3.5 w-3.5 text-amber-400" />
+                                                                                    )}
+                                                                                    <span className="font-mono text-zinc-300">{fc.path}</span>
+                                                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${fc.action === 'create' ? 'bg-green-500/10 text-green-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                                                                        {fc.action}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <button
+                                                                                    onClick={() => handleApplyFileChange(fc)}
+                                                                                    className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-purple-600/20 text-purple-300 rounded border border-purple-500/30 hover:bg-purple-600/30 transition-colors"
+                                                                                >
+                                                                                    <Check className="h-3 w-3" />
+                                                                                    Apply
+                                                                                </button>
+                                                                            </div>
+                                                                            <pre className="text-[11px] text-zinc-500 px-3 py-2 max-h-32 overflow-auto font-mono leading-tight">
+                                                                                {fc.content.substring(0, 500)}{fc.content.length > 500 ? '\n...' : ''}
+                                                                            </pre>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                {agentLoading && (
+                                                    <div className="flex justify-start">
+                                                        <div className="bg-zinc-800/60 border border-zinc-700/50 rounded-xl px-3 py-2 text-sm flex items-center gap-2 text-zinc-400">
+                                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                            Thinking...
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {/* Chat Input */}
+                                            <div className="flex items-center gap-2 px-3 py-2 border-t border-zinc-800 bg-zinc-900/50">
+                                                <input
+                                                    ref={agentInputRef}
+                                                    type="text"
+                                                    value={agentInput}
+                                                    onChange={(e) => setAgentInput(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter' && !e.shiftKey && agentInput.trim() && !agentLoading) {
+                                                            e.preventDefault();
+                                                            handleSendAgentMessage();
+                                                        }
+                                                    }}
+                                                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-colors"
+                                                    placeholder="Ask the agent anything..."
+                                                    disabled={agentLoading}
+                                                />
+                                                <button
+                                                    onClick={handleSendAgentMessage}
+                                                    disabled={!agentInput.trim() || agentLoading}
+                                                    className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                                >
+                                                    <Send className="h-4 w-4" />
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                 </div>
-                            </>
-                        ) : (
-                            <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-                                <Code2 className="h-16 w-16 mb-4 text-zinc-700" />
-                                <h3 className="text-xl font-medium text-zinc-400 mb-2">
-                                    {repoInfo.owner}/{repoInfo.repo}
-                                </h3>
-                                {repoInfo.description && (
-                                    <p className="text-sm text-zinc-600 mb-4 max-w-md text-center">
-                                        {repoInfo.description}
-                                    </p>
-                                )}
-                                <p className="text-sm mb-4">Select a file from the explorer to view its contents</p>
-                                {hasPackageJson && containerStatus === 'idle' && (
-                                    <button
-                                        onClick={bootWebContainer}
-                                        className="flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors font-medium text-sm mt-2"
-                                    >
-                                        <Play className="h-4 w-4" />
-                                        Run Project
-                                    </button>
-                                )}
                             </div>
                         )}
-                    </div>
 
-                    {/* Resize Handle */}
-                    {bottomPanel && (
-                        <div
-                            className={`h-1 bg-zinc-800 cursor-row-resize flex items-center justify-center hover:bg-amber-500/50 transition-colors flex-shrink-0 group ${isResizing ? 'bg-amber-500/50' : ''}`}
-                            onMouseDown={handleResizeStart}
-                        >
-                            <GripHorizontal className="h-3 w-3 text-zinc-600 group-hover:text-amber-400 transition-colors" />
-                        </div>
-                    )}
-
-                    {/* Bottom Panel */}
-                    {bottomPanel && (
-                        <div
-                            className="flex flex-col bg-zinc-950 border-t border-zinc-800 overflow-hidden flex-shrink-0"
-                            style={{ height: `${panelHeight}%` }}
-                        >
-                            {/* Panel Tab Bar */}
-                            <div className="flex items-center px-2 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
+                        {/* Bottom Panel Toggle Bar (when panel is closed) */}
+                        {!bottomPanel && (
+                            <div className="flex items-center px-2 py-0.5 bg-zinc-900 border-t border-zinc-800 flex-shrink-0">
                                 <button
                                     onClick={() => togglePanel('terminal')}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${bottomPanel === 'terminal'
-                                        ? 'text-amber-400 border-amber-400'
-                                        : 'text-zinc-500 border-transparent hover:text-zinc-300'
-                                        }`}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
                                 >
                                     <Terminal className="h-3.5 w-3.5" />
                                     Terminal
                                 </button>
                                 <button
                                     onClick={() => togglePanel('preview')}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${bottomPanel === 'preview'
-                                        ? 'text-amber-400 border-amber-400'
-                                        : 'text-zinc-500 border-transparent hover:text-zinc-300'
-                                        }`}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
                                 >
                                     <Eye className="h-3.5 w-3.5" />
                                     Preview
                                     {previewUrl && (
-                                        <span className="h-1.5 w-1.5 rounded-full bg-green-400 ml-1" />
+                                        <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
                                     )}
                                 </button>
+                                <button
+                                    onClick={() => togglePanel('agent')}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                                >
+                                    <Bot className="h-3.5 w-3.5" />
+                                    Agent
+                                </button>
+                                {containerStatus !== 'idle' && statusBadge.text && (
+                                    <span className={`ml-auto flex items-center gap-1.5 text-xs ${statusBadge.color}`}>
+                                        {statusBadge.icon}
+                                        {statusBadge.text}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
 
-                                <div className="ml-auto flex items-center gap-1">
-                                    {bottomPanel === 'preview' && previewUrl && (
-                                        <button
-                                            onClick={() => {
-                                                if (iframeRef.current) {
-                                                    iframeRef.current.src = previewUrl;
-                                                }
-                                            }}
-                                            className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
-                                            title="Refresh preview"
-                                        >
-                                            <RefreshCw className="h-3.5 w-3.5" />
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={() => setBottomPanel(null)}
-                                        className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
-                                        title="Close panel"
-                                    >
-                                        <X className="h-3.5 w-3.5" />
-                                    </button>
+            {/* ─── Commit Modal ──────────────────────────────────────── */}
+            {
+                showCommitModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                        <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+                            {/* Modal Header */}
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+                                <div className="flex items-center gap-2">
+                                    <GitCommit className="h-5 w-5 text-amber-400" />
+                                    <h3 className="text-lg font-semibold text-white">Commit & Push</h3>
                                 </div>
+                                <button
+                                    onClick={() => setShowCommitModal(false)}
+                                    className="p-1 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+                                >
+                                    <X className="h-5 w-5" />
+                                </button>
                             </div>
 
-                            {/* Panel Content */}
-                            <div className="flex-1 overflow-hidden relative">
-                                {/* Terminal */}
-                                <div
-                                    ref={terminalContainerRef}
-                                    className="absolute inset-0 p-1"
-                                    style={{ display: bottomPanel === 'terminal' ? 'block' : 'none' }}
-                                />
+                            {/* Modal Body */}
+                            <div className="px-5 py-4 space-y-4">
+                                {/* Repo & Branch info */}
+                                <div className="flex items-center gap-2 text-sm text-zinc-400 bg-zinc-800/50 rounded-lg px-3 py-2">
+                                    <GitBranch className="h-4 w-4 text-amber-500" />
+                                    <span className="text-zinc-500">{repoInfo.owner}/</span>
+                                    <span className="text-white font-medium">{repoInfo.repo}</span>
+                                    <span className="text-zinc-600 mx-1">→</span>
+                                    <span className="text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded text-xs">{repoInfo.branch}</span>
+                                </div>
 
-                                {/* Preview */}
-                                {bottomPanel === 'preview' && (
-                                    <div className="h-full flex flex-col">
-                                        {previewUrl ? (
-                                            <>
-                                                {/* URL bar */}
-                                                <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900/50 border-b border-zinc-800/50 flex-shrink-0">
-                                                    <div className="flex items-center gap-1.5 flex-1 bg-zinc-800 rounded-md px-3 py-1 text-xs text-zinc-400 font-mono truncate">
-                                                        <div className="h-2 w-2 rounded-full bg-green-400 flex-shrink-0" />
-                                                        {previewUrl}
-                                                    </div>
-                                                    <a
-                                                        href={previewUrl}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
-                                                        title="Open in new tab"
-                                                    >
-                                                        <ExternalLink className="h-3.5 w-3.5" />
-                                                    </a>
-                                                </div>
-                                                <iframe
-                                                    ref={iframeRef}
-                                                    src={previewUrl}
-                                                    className="flex-1 w-full bg-white"
-                                                    // @ts-ignore — credentialless is a valid HTML attribute but not yet in React's types
-                                                    credentialless="true"
-                                                    title="Preview"
-                                                />
-                                            </>
-                                        ) : (
-                                            <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-                                                {containerStatus === 'idle' ? (
-                                                    <>
-                                                        <Eye className="h-12 w-12 mb-3 text-zinc-700" />
-                                                        <p className="text-sm font-medium text-zinc-400 mb-1">No preview available</p>
-                                                        <p className="text-xs text-zinc-600 mb-3">Click ▶ Run to start the dev server</p>
-                                                        {hasPackageJson && (
-                                                            <button
-                                                                onClick={bootWebContainer}
-                                                                className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors text-xs font-medium"
-                                                            >
-                                                                <Play className="h-3.5 w-3.5" />
-                                                                Run Project
-                                                            </button>
-                                                        )}
-                                                    </>
-                                                ) : containerStatus === 'error' ? (
-                                                    <>
-                                                        <AlertCircle className="h-12 w-12 mb-3 text-red-500/60" />
-                                                        <p className="text-sm font-medium text-red-400 mb-1">Failed to start</p>
-                                                        <p className="text-xs text-zinc-600">{statusMessage}</p>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Loader2 className="h-10 w-10 mb-3 text-amber-500 animate-spin" />
-                                                        <p className="text-sm font-medium text-zinc-400 mb-1">Starting dev server...</p>
-                                                        <p className="text-xs text-zinc-600">{statusMessage}</p>
-                                                        <p className="text-xs text-zinc-700 mt-2">Check the Terminal tab for progress</p>
-                                                    </>
-                                                )}
-                                            </div>
-                                        )}
+                                {/* File being committed */}
+                                <div className="flex items-center gap-2 text-sm text-zinc-300">
+                                    <FileText className="h-4 w-4 text-zinc-500" />
+                                    <span className="font-mono text-xs bg-zinc-800 px-2 py-1 rounded">{selectedFile?.path}</span>
+                                </div>
+
+                                {/* Commit Message */}
+                                <div>
+                                    <label className="flex items-center gap-1.5 text-xs font-medium text-zinc-400 mb-1.5">
+                                        <MessageSquare className="h-3.5 w-3.5" />
+                                        Commit Message
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={commitMessage}
+                                        onChange={(e) => setCommitMessage(e.target.value)}
+                                        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20 transition-colors"
+                                        placeholder="Describe your changes..."
+                                        autoFocus
+                                    />
+                                </div>
+
+                                {/* GitHub Token */}
+                                <div>
+                                    <label className="flex items-center gap-1.5 text-xs font-medium text-zinc-400 mb-1.5">
+                                        <Key className="h-3.5 w-3.5" />
+                                        GitHub Personal Access Token
+                                    </label>
+                                    <input
+                                        type="password"
+                                        value={githubToken}
+                                        onChange={(e) => setGithubToken(e.target.value)}
+                                        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20 transition-colors font-mono"
+                                        placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                                    />
+                                    <p className="text-[11px] text-zinc-600 mt-1">
+                                        Needs <span className="text-amber-500/70">repo</span> scope. Token stays in your browser, never stored.
+                                        <a
+                                            href="https://github.com/settings/tokens/new?scopes=repo&description=Kabada%20IDE"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-amber-500/70 hover:text-amber-400 ml-1 underline"
+                                        >
+                                            Create token →
+                                        </a>
+                                    </p>
+                                </div>
+
+                                {/* Error */}
+                                {commitError && (
+                                    <div className="flex items-start gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                        <span>{commitError}</span>
+                                    </div>
+                                )}
+
+                                {/* Success */}
+                                {commitSuccess && (
+                                    <div className="flex items-center gap-2 text-sm text-green-400 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
+                                        <Check className="h-4 w-4" />
+                                        <span>{commitSuccess}</span>
                                     </div>
                                 )}
                             </div>
-                        </div>
-                    )}
 
-                    {/* Bottom Panel Toggle Bar (when panel is closed) */}
-                    {!bottomPanel && (
-                        <div className="flex items-center px-2 py-0.5 bg-zinc-900 border-t border-zinc-800 flex-shrink-0">
-                            <button
-                                onClick={() => togglePanel('terminal')}
-                                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-                            >
-                                <Terminal className="h-3.5 w-3.5" />
-                                Terminal
-                            </button>
-                            <button
-                                onClick={() => togglePanel('preview')}
-                                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-                            >
-                                <Eye className="h-3.5 w-3.5" />
-                                Preview
-                                {previewUrl && (
-                                    <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
-                                )}
-                            </button>
-                            {containerStatus !== 'idle' && statusBadge.text && (
-                                <span className={`ml-auto flex items-center gap-1.5 text-xs ${statusBadge.color}`}>
-                                    {statusBadge.icon}
-                                    {statusBadge.text}
-                                </span>
-                            )}
+                            {/* Modal Footer */}
+                            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800 bg-zinc-900/50">
+                                <button
+                                    onClick={() => setShowCommitModal(false)}
+                                    className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors"
+                                    disabled={isCommitting}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleCommit}
+                                    disabled={isCommitting || !commitMessage.trim() || !githubToken.trim()}
+                                    className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition-colors font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    {isCommitting ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            Pushing...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <GitCommit className="h-4 w-4" />
+                                            Commit & Push
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         </div>
-                    )}
-                </div>
-            </div>
-        </div>
+                    </div>
+                )
+            }
+        </>
     );
 };
 
