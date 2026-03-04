@@ -363,7 +363,14 @@ const App: React.FC = () => {
   return (
     <HashRouter>
       <div className="min-h-screen bg-zinc-950 flex flex-col">
-        <Navbar onHome={() => { setViewState(ViewState.HOME); updateHash(ViewState.HOME); }} />
+        <Navbar 
+          onHome={() => { setViewState(ViewState.HOME); updateHash(ViewState.HOME); }} 
+          repoInfo={viewState === ViewState.SANDBOX && githubImportResult?.repoInfo ? {
+            owner: githubImportResult.repoInfo.owner,
+            repo: githubImportResult.repoInfo.repo,
+            branch: githubImportResult.repoInfo.branch
+          } : undefined}
+        />
 
         <main className="flex-grow">
 
@@ -782,7 +789,7 @@ const App: React.FC = () => {
 
           {/* GITHUB IMPORT LOADING VIEW */}
           {viewState === ViewState.GITHUB_IMPORT && (
-            <div className="flex items-center justify-center h-[calc(100vh-64px)] bg-zinc-950">
+            <div className="flex items-center justify-center h-[calc(100vh-36px)] bg-zinc-950">
               <div className="text-center max-w-md px-4">
                 <div className="mb-6">
                   <div className="relative">

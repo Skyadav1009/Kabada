@@ -1182,7 +1182,7 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
     // Loading state
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-[calc(100vh-64px)] bg-zinc-950">
+            <div className="flex items-center justify-center h-[calc(100vh-36px)] bg-zinc-950">
                 <div className="text-center">
                     <svg className="animate-spin h-10 w-10 text-amber-500 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -1197,7 +1197,7 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
     // Error state
     if (error || !container) {
         return (
-            <div className="flex items-center justify-center h-[calc(100vh-64px)] bg-zinc-950">
+            <div className="flex items-center justify-center h-[calc(100vh-36px)] bg-zinc-950">
                 <div className="text-center">
                     <p className="text-red-400 text-lg mb-4">{error || 'Something went wrong'}</p>
                     <button
@@ -1215,36 +1215,27 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
 
     return (
         <>
-            <div className="flex flex-col h-[calc(100vh-64px)] bg-zinc-950">
+            <div className="flex flex-col h-[calc(100vh-36px)] bg-zinc-950">
                 {/* Top Bar */}
-                <div className="flex items-center justify-between px-3 py-2 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
+                <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900/50 border-b border-zinc-800 flex-shrink-0">
                     <div className="flex items-center gap-3 min-w-0">
                         {/* Mobile menu toggle */}
                         <button
                             onClick={() => setShowSidebar(!showSidebar)}
-                            className="md:hidden p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400"
+                            className="md:hidden p-1 rounded-md hover:bg-zinc-800 text-zinc-400"
                         >
-                            <Menu className="h-5 w-5" />
+                            <Menu className="h-4 w-4" />
                         </button>
 
-                        {/* Repo info */}
+                        {/* Language & Stars (moved from repo info) */}
                         <div className="flex items-center gap-2 min-w-0">
-                            <GitBranch className="h-4 w-4 text-amber-500 flex-shrink-0" />
-                            <span className="text-zinc-300 font-medium truncate text-sm">
-                                <span className="text-zinc-500">{repoInfo.owner}</span>
-                                <span className="text-zinc-600 mx-0.5">/</span>
-                                <span className="text-white">{repoInfo.repo}</span>
-                            </span>
-                            <span className="text-xs text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full hidden sm:inline">
-                                {repoInfo.branch}
-                            </span>
                             {repoInfo.language && (
-                                <span className="text-xs text-amber-400/80 bg-amber-500/10 px-2 py-0.5 rounded-full hidden sm:inline">
+                                <span className="text-xs text-amber-400/80 bg-amber-500/10 px-2 py-0.5 rounded-full">
                                     {repoInfo.language}
                                 </span>
                             )}
                             {repoInfo.stars > 0 && (
-                                <span className="flex items-center gap-1 text-xs text-zinc-500 hidden sm:flex">
+                                <span className="flex items-center gap-1 text-xs text-zinc-500">
                                     <Star className="h-3 w-3" /> {repoInfo.stars.toLocaleString()}
                                 </span>
                             )}
