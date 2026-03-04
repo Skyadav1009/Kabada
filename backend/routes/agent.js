@@ -134,15 +134,28 @@ function cleanReplyText(text) {
     return text.replace(/<file_changes>[\s\S]*?<\/file_changes>/g, '').trim();
 }
 
+// ─── Available Groq Models ────────────────────────────────────────────
+const ALLOWED_MODELS = new Set([
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'qwen/qwen3-32b',
+    'openai/gpt-oss-120b',
+]);
+
+const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+
 // ─── Call Groq API ────────────────────────────────────────────────────
-async function callGroqAPI(messages) {
+async function callGroqAPI(messages, requestedModel) {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
         throw new Error('GROQ_API_KEY is not configured on the server');
     }
 
-    // Use the best available model — can be overridden via env
-    const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+    // Use requested model if allowed, else fall back to default
+    const model = (requestedModel && ALLOWED_MODELS.has(requestedModel)) 
+        ? requestedModel 
+        : (process.env.GROQ_MODEL || DEFAULT_MODEL);
 
     const body = JSON.stringify({
         model: model,
@@ -200,11 +213,14 @@ router.post('/chat', async (req, res) => {
             });
         }
 
-        const { message, repoContext, chatHistory, repoInfo } = req.body;
+        const { message, repoContext, chatHistory, repoInfo, model } = req.body;
 
         if (!message || !message.trim()) {
             return res.status(400).json({ error: 'Message is required' });
         }
+
+        // Log selected model
+        const selectedModel = (model && ALLOWED_MODELS.has(model)) ? model : DEFAULT_MODEL;
 
         // Build system prompt
         const systemPrompt = buildSystemPrompt(repoInfo, repoContext);
@@ -228,10 +244,10 @@ router.post('/chat', async (req, res) => {
         // Add current message
         messages.push({ role: 'user', content: message });
 
-        console.log(`🤖 Agent request from ${clientIp}: "${message.substring(0, 100)}..." | context: ${(repoContext?.fileContents || '').length} chars`);
+        console.log(`🤖 Agent request from ${clientIp}: "${message.substring(0, 100)}..." | model: ${selectedModel} | context: ${(repoContext?.fileContents || '').length} chars`);
 
-        // Call Groq
-        const groqResponse = await callGroqAPI(messages);
+        // Call Groq with selected model
+        const groqResponse = await callGroqAPI(messages, selectedModel);
 
         const rawReply = groqResponse.choices?.[0]?.message?.content || 'Sorry, I could not generate a response.';
 

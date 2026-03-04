@@ -445,11 +445,12 @@ export const sendAgentMessage = async (
   message: string,
   repoContext: AgentRepoContext,
   chatHistory: { role: string; content: string }[],
-  repoInfo: { owner: string; repo: string; branch: string }
+  repoInfo: { owner: string; repo: string; branch: string },
+  model?: string
 ): Promise<AgentResponse> => {
   return await apiRequest<AgentResponse>('/agent/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, repoContext, chatHistory, repoInfo }),
+    body: JSON.stringify({ message, repoContext, chatHistory, repoInfo, model }),
   });
 };
 

@@ -109,6 +109,22 @@ export interface GitHubCommitResult {
 }
 
 // ─── AI Agent Types ──────────────────────────────────────────────────
+export interface AgentModel {
+  id: string;
+  name: string;
+  provider: 'groq' | 'openai' | 'anthropic' | 'google';
+  description: string;
+  icon?: string;
+}
+
+export const AVAILABLE_AGENTS: AgentModel[] = [
+  { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', provider: 'groq', description: 'Fast & capable, best for most tasks' },
+  { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', provider: 'groq', description: 'Ultra-fast, good for quick edits' },
+  { id: 'meta-llama/llama-4-scout-17b-16e-instruct', name: 'Llama 4 Scout', provider: 'groq', description: 'Latest Llama 4, great for vision' },
+  { id: 'qwen/qwen3-32b', name: 'Qwen 3 32B', provider: 'groq', description: 'Alibaba Cloud, strong reasoning' },
+  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'openai', description: 'OpenAI open-weight flagship' },
+];
+
 export interface AgentFileChange {
   action: 'edit' | 'create';
   path: string;

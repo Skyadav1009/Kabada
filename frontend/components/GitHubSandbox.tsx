@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Container, FileMeta, GitHubImportResult, AgentMessage, AgentFileChange, AgentRepoContext } from '../types';
+import { Container, FileMeta, GitHubImportResult, AgentMessage, AgentFileChange, AgentRepoContext, AVAILABLE_AGENTS } from '../types';
 import { getContainerById, getFileDownloadUrl, commitToGitHub, sendAgentMessage } from '../services/storageService';
 import { WebContainer, FileSystemTree } from '@webcontainer/api';
 import { Terminal as XTerm } from '@xterm/xterm';
@@ -11,7 +11,8 @@ import {
     Code2, FileCode, FileJson, Image, File as FileIcon, Download,
     Share2, Play, Square, Terminal, Eye, GripHorizontal,
     RefreshCw, Loader2, AlertCircle, Edit3, Save, GitCommit,
-    Key, MessageSquare, Bot, Send, Sparkles, FileEdit, FilePlus
+    Key, MessageSquare, Bot, Send, Sparkles, FileEdit, FilePlus,
+    ChevronsUpDown, Zap
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -354,6 +355,8 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
     const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([]);
     const [agentInput, setAgentInput] = useState('');
     const [agentLoading, setAgentLoading] = useState(false);
+    const [selectedAgent, setSelectedAgent] = useState(AVAILABLE_AGENTS[0].id);
+    const [showAgentPicker, setShowAgentPicker] = useState(false);
     const agentChatRef = useRef<HTMLDivElement | null>(null);
     const agentInputRef = useRef<HTMLInputElement | null>(null);
     const agentFileCache = useRef<Map<string, string>>(new Map());
@@ -1066,7 +1069,8 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                 userMessage,
                 context,
                 history,
-                { owner: repoInfo.owner, repo: repoInfo.repo, branch: repoInfo.branch }
+                { owner: repoInfo.owner, repo: repoInfo.repo, branch: repoInfo.branch },
+                selectedAgent
             );
 
             const assistantMsg: AgentMessage = {
@@ -1087,7 +1091,7 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
             setAgentLoading(false);
             setTimeout(() => agentChatRef.current?.scrollTo({ top: agentChatRef.current.scrollHeight, behavior: 'smooth' }), 100);
         }
-    }, [agentInput, agentLoading, agentMessages, buildRepoContext, importResult]);
+    }, [agentInput, agentLoading, agentMessages, buildRepoContext, importResult, selectedAgent]);
 
     const handleApplyFileChange = useCallback((fc: AgentFileChange) => {
         // Find the file in the tree and select it, then apply content
@@ -1778,30 +1782,79 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                                                     </div>
                                                 )}
                                             </div>
-                                            {/* Chat Input */}
-                                            <div className="flex items-center gap-2 px-3 py-2 border-t border-zinc-800 bg-zinc-900/50">
-                                                <input
-                                                    ref={agentInputRef}
-                                                    type="text"
-                                                    value={agentInput}
-                                                    onChange={(e) => setAgentInput(e.target.value)}
-                                                    onKeyDown={(e) => {
-                                                        if (e.key === 'Enter' && !e.shiftKey && agentInput.trim() && !agentLoading) {
-                                                            e.preventDefault();
-                                                            handleSendAgentMessage();
-                                                        }
-                                                    }}
-                                                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-colors"
-                                                    placeholder="Ask the agent anything..."
-                                                    disabled={agentLoading}
-                                                />
-                                                <button
-                                                    onClick={handleSendAgentMessage}
-                                                    disabled={!agentInput.trim() || agentLoading}
-                                                    className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                                >
-                                                    <Send className="h-4 w-4" />
-                                                </button>
+                                            {/* Chat Input with Model Switcher */}
+                                            <div className="flex flex-col border-t border-zinc-800 bg-zinc-900/50">
+                                                {/* Model Picker Dropdown */}
+                                                {showAgentPicker && (
+                                                    <div className="px-3 py-2 border-b border-zinc-800/50 bg-zinc-900/80">
+                                                        <div className="flex flex-wrap gap-1.5">
+                                                            {AVAILABLE_AGENTS.map((agent) => (
+                                                                <button
+                                                                    key={agent.id}
+                                                                    onClick={() => {
+                                                                        setSelectedAgent(agent.id);
+                                                                        setShowAgentPicker(false);
+                                                                    }}
+                                                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                                                        selectedAgent === agent.id
+                                                                            ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40'
+                                                                            : 'bg-zinc-800/80 text-zinc-400 border border-zinc-700/50 hover:bg-zinc-700/80 hover:text-zinc-200'
+                                                                    }`}
+                                                                >
+                                                                    <Zap className="h-3 w-3" />
+                                                                    <span>{agent.name}</span>
+                                                                    {selectedAgent === agent.id && (
+                                                                        <Check className="h-3 w-3 text-purple-400" />
+                                                                    )}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                        <p className="text-[10px] text-zinc-600 mt-1.5">
+                                                            {AVAILABLE_AGENTS.find(a => a.id === selectedAgent)?.description}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                                {/* Input Row */}
+                                                <div className="flex items-center gap-2 px-3 py-2">
+                                                    {/* Model Switcher Button */}
+                                                    <button
+                                                        onClick={() => setShowAgentPicker(!showAgentPicker)}
+                                                        className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                                                            showAgentPicker 
+                                                                ? 'bg-purple-600/20 text-purple-300 border-purple-500/40' 
+                                                                : 'bg-zinc-800/80 text-zinc-400 border-zinc-700/50 hover:bg-zinc-700/80 hover:text-zinc-200'
+                                                        }`}
+                                                        title="Switch AI Model"
+                                                    >
+                                                        <Bot className="h-3.5 w-3.5" />
+                                                        <span className="hidden sm:inline max-w-[80px] truncate">
+                                                            {AVAILABLE_AGENTS.find(a => a.id === selectedAgent)?.name || 'Model'}
+                                                        </span>
+                                                        <ChevronsUpDown className="h-3 w-3 opacity-60" />
+                                                    </button>
+                                                    <input
+                                                        ref={agentInputRef}
+                                                        type="text"
+                                                        value={agentInput}
+                                                        onChange={(e) => setAgentInput(e.target.value)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter' && !e.shiftKey && agentInput.trim() && !agentLoading) {
+                                                                e.preventDefault();
+                                                                handleSendAgentMessage();
+                                                            }
+                                                        }}
+                                                        className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-zinc-500 outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-colors"
+                                                        placeholder="Ask the agent anything..."
+                                                        disabled={agentLoading}
+                                                    />
+                                                    <button
+                                                        onClick={handleSendAgentMessage}
+                                                        disabled={!agentInput.trim() || agentLoading}
+                                                        className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    >
+                                                        <Send className="h-4 w-4" />
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
