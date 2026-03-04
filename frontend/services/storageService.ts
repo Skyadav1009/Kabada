@@ -452,3 +452,20 @@ export const sendAgentMessage = async (
     body: JSON.stringify({ message, repoContext, chatHistory, repoInfo }),
   });
 };
+
+// --- Cloud Sandbox (E2B) APIs ---
+export const startCloudSandbox = async (
+  repoInfo: { owner: string; repo: string; branch: string }
+): Promise<{ id: string; url: string; port: number; status: string; key: string }> => {
+  return await apiRequest<{ id: string; url: string; port: number; status: string; key: string }>('/sandbox/start', {
+    method: 'POST',
+    body: JSON.stringify({ repoInfo }),
+  });
+};
+
+export const stopCloudSandbox = async (sandboxId: string): Promise<{ success: boolean; message: string }> => {
+  return await apiRequest<{ success: boolean; message: string }>('/sandbox/stop', {
+    method: 'POST',
+    body: JSON.stringify({ sandboxId }),
+  });
+};

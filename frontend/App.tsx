@@ -300,6 +300,38 @@ const App: React.FC = () => {
   const openContainerOrSandbox = (container: ContainerSummary) => {
     if (container.name.startsWith('gh-')) {
       // GitHub import — open directly as sandbox (no password needed)
+      // Use githubInfo from the API (stored in MongoDB) if available
+      const ghInfo = (container as any).githubInfo;
+
+      // Try sessionStorage as secondary source
+      const savedInfo = sessionStorage.getItem(`sandbox-info-${container.id}`);
+      let repoInfo = { owner: '', repo: '', branch: 'main', description: '', stars: 0, language: '' };
+
+      if (ghInfo && ghInfo.owner && ghInfo.repo) {
+        // Best source: directly from MongoDB via API
+        repoInfo = {
+          owner: ghInfo.owner,
+          repo: ghInfo.repo,
+          branch: ghInfo.branch || 'main',
+          description: ghInfo.description || '',
+          stars: ghInfo.stars || 0,
+          language: ghInfo.language || '',
+        };
+      } else if (savedInfo) {
+        // Secondary source: sessionStorage from previous import
+        try {
+          const info = JSON.parse(savedInfo);
+          if (info.repoInfo) repoInfo = info.repoInfo;
+        } catch (e) { /* fall through */ }
+      } else {
+        // Last resort: parse from container name (may be truncated but better than nothing)
+        const parts = container.name.replace(/^gh-/, '').split('-');
+        const owner = parts[0] || '';
+        let repo = parts.slice(1).join('-');
+        repo = repo.replace(/-[a-f0-9]{6}$/, '');
+        repoInfo = { ...repoInfo, owner, repo: repo || container.name };
+      }
+
       setGithubImportResult({
         containerId: container.id,
         containerName: container.name,
@@ -308,14 +340,7 @@ const App: React.FC = () => {
         fileCount: container.fileCount,
         skippedCount: 0,
         totalSize: 0,
-        repoInfo: {
-          owner: container.name.split('-')[1] || '',
-          repo: container.name.split('-').slice(2).join('-') || container.name,
-          branch: 'main',
-          description: '',
-          stars: 0,
-          language: '',
-        },
+        repoInfo: repoInfo as any,
       });
       setViewState(ViewState.SANDBOX);
       updateHash(ViewState.SANDBOX, container.id);

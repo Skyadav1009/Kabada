@@ -70,6 +70,14 @@ const containerSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  githubInfo: {
+    owner: { type: String, default: '' },
+    repo: { type: String, default: '' },
+    branch: { type: String, default: 'main' },
+    description: { type: String, default: '' },
+    stars: { type: Number, default: 0 },
+    language: { type: String, default: '' }
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -142,6 +150,7 @@ containerSchema.methods.toSafeObject = function () {
     maxViews: this.maxViews,
     currentViews: this.currentViews,
     readOnly: this.readOnly,
+    githubInfo: this.githubInfo || null,
     createdAt: this.createdAt,
     lastAccessed: this.lastAccessed
   };
@@ -157,6 +166,7 @@ containerSchema.methods.toSummary = function () {
     maxViews: this.maxViews,
     currentViews: this.currentViews,
     readOnly: this.readOnly,
+    githubInfo: this.githubInfo || null,
     createdAt: this.createdAt
   };
 };

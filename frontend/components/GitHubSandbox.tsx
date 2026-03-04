@@ -363,11 +363,19 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
     const [panelHeight, setPanelHeight] = useState(40); // percentage
     const [isResizing, setIsResizing] = useState(false);
 
+    // Common Runner state
+    const [runMode, setRunMode] = useState<'webcontainer' | 'cloud'>('webcontainer');
+
     // WebContainer state
     const [containerStatus, setContainerStatus] = useState<ContainerStatus>('idle');
     const [statusMessage, setStatusMessage] = useState('');
     const [previewUrl, setPreviewUrl] = useState<string>('');
     const [hasPackageJson, setHasPackageJson] = useState(false);
+
+    // Cloud Sandbox state
+    const [cloudSandboxId, setCloudSandboxId] = useState<string>('');
+    const [isStartingCloud, setIsStartingCloud] = useState(false);
+    const [cloudError, setCloudError] = useState('');
 
     // Refs
     const webContainerRef = useRef<WebContainer | null>(null);
@@ -397,13 +405,25 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                 if (data) {
                     setContainer(data);
                     const firstLevelDirs = new Set<string>();
+                    let isFullStack = false;
+
                     data.files.forEach(f => {
                         const path = f.relativePath || f.name;
                         const firstDir = path.split('/')[0];
                         if (path.includes('/')) {
                             firstLevelDirs.add(firstDir);
                         }
+
+                        // Heuristic for full stack
+                        if (firstDir === 'backend' || firstDir === 'server' || firstDir === 'api') {
+                            isFullStack = true;
+                        }
                     });
+
+                    if (isFullStack) {
+                        setRunMode('cloud');
+                    }
+
                     setExpandedDirs(firstLevelDirs);
                 } else {
                     setError('Failed to load sandbox');
@@ -716,6 +736,87 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
             terminalRef.current.writeln('\x1b[90mWebContainer stopped.\x1b[0m');
             terminalRef.current.writeln('');
             terminalRef.current.writeln('\x1b[90mClick \x1b[1;32m▶ Run\x1b[0m\x1b[90m to restart.\x1b[0m');
+        }
+    };
+
+    // ─── Cloud Sandbox (E2B) flow ────────────────────────────────────
+
+    const startCloudSandboxFlow = async () => {
+        if (!importResult?.repoInfo || containerStatus !== 'idle') return;
+
+        setBottomPanel('terminal');
+        setContainerStatus('booting');
+        setStatusMessage('Starting Cloud Sandbox...');
+        setIsStartingCloud(true);
+        setCloudError('');
+
+        const term = terminalRef.current;
+        if (term) {
+            term.clear();
+            term.writeln('\x1b[1;34m☁️  Starting E2B Cloud Sandbox (Full-Stack VM)...\x1b[0m');
+            term.writeln('\x1b[90m   This spins up a real Linux container with Node, Python, and DB support.\x1b[0m');
+            term.writeln('');
+        }
+
+        try {
+            const { startCloudSandbox } = await import('../services/storageService');
+
+            if (term) {
+                term.writeln('\x1b[36m↳\x1b[0m Cloning repository and installing dependencies (this may take 1-2 mins)...');
+            }
+
+            // Call the backend API
+            const result = await startCloudSandbox(importResult.repoInfo);
+
+            setCloudSandboxId(result.id);
+            setPreviewUrl(result.url);
+            setContainerStatus('ready');
+            setStatusMessage(`Cloud Sandbox running on ${result.url}`);
+
+            if (term) {
+                term.writeln('\x1b[32m✓\x1b[0m Cloud Sandbox ready!');
+                term.writeln('');
+                term.writeln(`\x1b[1;32m🚀 Live Preview available at ${result.url}\x1b[0m`);
+                term.writeln('\x1b[90m   Switch to the Preview tab to view your app.\x1b[0m');
+                term.writeln('');
+                term.writeln('\x1b[33mNote:\x1b[0m Terminal input is disabled in Cloud Mode.');
+            }
+        } catch (err: any) {
+            console.error('Cloud Sandbox error:', err);
+            setContainerStatus('error');
+            setCloudError(err.message || 'Failed to start cloud sandbox');
+            setStatusMessage('Cloud Sandbox Failed');
+
+            if (term) {
+                term.writeln('');
+                term.writeln(`\x1b[1;31m✗ Error:\x1b[0m ${err.message || 'Failed to start cloud sandbox'}`);
+            }
+        } finally {
+            setIsStartingCloud(false);
+        }
+    };
+
+    const stopCloudSandboxFlow = async () => {
+        if (!cloudSandboxId) return;
+
+        setContainerStatus('idle');
+        setStatusMessage('');
+        setPreviewUrl('');
+
+        const term = terminalRef.current;
+        if (term) {
+            term.writeln('\x1b[90mStopping Cloud Sandbox...\x1b[0m');
+        }
+
+        try {
+            const { stopCloudSandbox } = await import('../services/storageService');
+            await stopCloudSandbox(cloudSandboxId);
+            setCloudSandboxId('');
+            if (term) {
+                term.writeln('\x1b[90mCloud Sandbox stopped.\x1b[0m');
+            }
+        } catch (err) {
+            console.error('Failed to stop cloud sandbox cleanly', err);
         }
     };
 
@@ -1061,12 +1162,10 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
         return highlightCode(fileContent, language);
     }, [fileContent, language]);
 
-    // ─── Status badge ────────────────────────────────────────────────
-
     const statusBadge = useMemo(() => {
         const configs: Record<ContainerStatus, { color: string; icon: React.ReactNode; text: string }> = {
             idle: { color: 'text-zinc-500', icon: null, text: '' },
-            booting: { color: 'text-amber-400', icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />, text: 'Booting...' },
+            booting: { color: 'text-amber-400', icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />, text: runMode === 'cloud' ? 'Booting Cloud VM...' : 'Booting...' },
             mounting: { color: 'text-amber-400', icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />, text: 'Mounting...' },
             installing: { color: 'text-blue-400', icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />, text: 'npm install...' },
             running: { color: 'text-blue-400', icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />, text: 'Running...' },
@@ -1074,7 +1173,7 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
             ready: { color: 'text-green-400', icon: <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />, text: 'Ready' },
         };
         return configs[containerStatus];
-    }, [containerStatus]);
+    }, [containerStatus, runMode]);
 
     // Loading state
     if (loading) {
@@ -1157,29 +1256,45 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                             </span>
                         )}
 
-                        {/* Run / Stop button */}
+                        {/* Run Mode Toggle & Button */}
+                        <div className="flex bg-zinc-900 rounded-lg p-0.5 border border-zinc-800 hidden sm:flex">
+                            <button
+                                onClick={() => setRunMode('webcontainer')}
+                                disabled={containerStatus !== 'idle'}
+                                className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${runMode === 'webcontainer' ? 'bg-zinc-800 text-amber-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'} disabled:opacity-50`}
+                            >
+                                Browser
+                            </button>
+                            <button
+                                onClick={() => setRunMode('cloud')}
+                                disabled={containerStatus !== 'idle'}
+                                className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${runMode === 'cloud' ? 'bg-zinc-800 text-amber-400 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'} disabled:opacity-50`}
+                            >
+                                Cloud
+                            </button>
+                        </div>
                         {containerStatus === 'idle' ? (
                             <button
-                                onClick={bootWebContainer}
+                                onClick={runMode === 'cloud' ? startCloudSandboxFlow : bootWebContainer}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors font-medium"
-                                title="Boot WebContainer and run the project"
+                                title={runMode === 'cloud' ? "Run Full-Stack App in Cloud VM" : "Boot WebContainer and run the project"}
                             >
                                 <Play className="h-3.5 w-3.5" />
-                                Run
+                                Run {runMode === 'cloud' && '(Cloud)'}
                             </button>
                         ) : containerStatus === 'error' ? (
                             <button
-                                onClick={() => { stopWebContainer(); }}
+                                onClick={() => runMode === 'cloud' ? stopCloudSandboxFlow() : stopWebContainer()}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 text-white rounded-lg hover:bg-red-500 transition-colors font-medium"
                             >
                                 <RefreshCw className="h-3.5 w-3.5" />
-                                Retry
+                                Clear Error
                             </button>
                         ) : (
                             <button
-                                onClick={stopWebContainer}
+                                onClick={runMode === 'cloud' ? stopCloudSandboxFlow : stopWebContainer}
                                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 text-white rounded-lg hover:bg-red-500 transition-colors font-medium"
-                                title="Stop WebContainer"
+                                title={runMode === 'cloud' ? "Stop Cloud Sandbox" : "Stop WebContainer"}
                             >
                                 <Square className="h-3 w-3" />
                                 Stop
@@ -1548,14 +1663,33 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                                                             <Eye className="h-12 w-12 mb-3 text-zinc-700" />
                                                             <p className="text-sm font-medium text-zinc-400 mb-1">No preview available</p>
                                                             <p className="text-xs text-zinc-600 mb-3">Click ▶ Run to start the dev server</p>
+
+                                                            {/* Run Mode Toggle & Button */}
                                                             {hasPackageJson && (
-                                                                <button
-                                                                    onClick={bootWebContainer}
-                                                                    className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors text-xs font-medium"
-                                                                >
-                                                                    <Play className="h-3.5 w-3.5" />
-                                                                    Run Project
-                                                                </button>
+                                                                <div className="flex flex-col items-center gap-3 w-full max-w-[200px]">
+                                                                    <div className="flex bg-zinc-900 rounded-lg p-1 w-full text-xs">
+                                                                        <button
+                                                                            onClick={() => setRunMode('webcontainer')}
+                                                                            className={`flex-1 py-1 px-2 rounded-md transition-colors ${runMode === 'webcontainer' ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                                                        >
+                                                                            Browser
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => setRunMode('cloud')}
+                                                                            className={`flex-1 py-1 px-2 rounded-md transition-colors ${runMode === 'cloud' ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                                                                        >
+                                                                            Cloud VM
+                                                                        </button>
+                                                                    </div>
+
+                                                                    <button
+                                                                        onClick={runMode === 'cloud' ? startCloudSandboxFlow : bootWebContainer}
+                                                                        className="flex justify-center items-center gap-1.5 w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 transition-colors text-xs font-medium"
+                                                                    >
+                                                                        <Play className="h-3.5 w-3.5" />
+                                                                        Run Project {runMode === 'cloud' && '(Cloud)'}
+                                                                    </button>
+                                                                </div>
                                                             )}
                                                         </>
                                                     ) : containerStatus === 'error' ? (

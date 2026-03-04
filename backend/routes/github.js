@@ -440,8 +440,16 @@ router.post('/import', async (req, res) => {
         const container = new Container({
             name: finalName,
             passwordHash: autoPassword,
-            readOnly: false, // GitHub imports are public — no password required
+            readOnly: false,
             maxViews: 0,
+            githubInfo: {
+                owner,
+                repo,
+                branch,
+                description: repoMeta.description || '',
+                stars: repoMeta.stargazers_count || 0,
+                language: repoMeta.language || ''
+            }
         });
 
         // 6. Upload files to Cloudinary and populate container.files

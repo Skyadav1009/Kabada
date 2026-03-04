@@ -116,23 +116,28 @@ export interface AgentFileChange {
 }
 
 export interface AgentMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   fileChanges?: AgentFileChange[];
-  timestamp: number;
-}
-
-export interface AgentResponse {
-  reply: string;
-  fileChanges: AgentFileChange[];
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+  timestamp?: number;
 }
 
 export interface AgentRepoContext {
   fileTree: string;
   fileContents: string;
+}
+
+export interface AgentResponse {
+  reply: string;
+  fileChanges: AgentFileChange[];
+  usage?: any;
+}
+
+// ─── Cloud Sandbox (E2B) Types ──────────────────────────────────────────
+export interface CloudSandboxInfo {
+  id: string;
+  url: string;
+  port: number;
+  status: string;
+  key: string;
 }
