@@ -407,6 +407,16 @@ export const deleteContainerAdmin = async (id: string, token: string): Promise<{
   });
 };
 
+// Delete container (user-facing, requires password)
+// If container has admin password, only admin password works
+// If container has no admin password, regular password works
+export const deleteContainer = async (id: string, password: string): Promise<{ success: boolean; message: string }> => {
+  return await apiRequest<{ success: boolean; message: string }>(`/containers/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ password }),
+  });
+};
+
 // --- GitHub Import APIs ---
 export const importGitHubRepo = async (
   repoUrl: string,

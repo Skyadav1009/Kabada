@@ -1073,4 +1073,60 @@ router.get('/:id/uploads/:filename', async (req, res) => {
   }
 });
 
+// Delete container (requires password verification)
+// If container has adminPassword, only admin password can delete
+// If container doesn't have adminPassword, regular password can delete
+router.delete('/:id', async (req, res) => {
+  try {
+    const { password } = req.body;
+    const container = await Container.findById(req.params.id);
+
+    if (!container) {
+      return res.status(404).json({ error: 'Container not found' });
+    }
+
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required to delete container' });
+    }
+
+    let isAuthorized = false;
+
+    // If container has an admin password (read-only container), only admin password can delete
+    if (container.adminPasswordHash) {
+      isAuthorized = await container.verifyAdminPassword(password);
+      if (!isAuthorized) {
+        return res.status(403).json({ error: 'Only admin password can delete this container' });
+      }
+    } else {
+      // Regular container - verify with container password
+      isAuthorized = await container.verifyPassword(password);
+      if (!isAuthorized) {
+        return res.status(403).json({ error: 'Invalid password' });
+      }
+    }
+
+    // Delete all Cloudinary files connected to this container
+    for (const file of container.files) {
+      try {
+        if (file.publicId) {
+          const resourceType = file.resourceType || 'raw';
+          await cloudinary.uploader.destroy(file.publicId, { resource_type: resourceType });
+        } else if (file.path && !file.path.startsWith('http') && fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
+      } catch (e) {
+        console.error('Error deleting file during container deletion:', e);
+      }
+    }
+
+    // Delete the container from the database
+    await Container.findByIdAndDelete(req.params.id);
+
+    res.json({ success: true, message: 'Container deleted successfully' });
+  } catch (error) {
+    console.error('Delete container error:', error);
+    res.status(500).json({ error: 'Failed to delete container' });
+  }
+});
+
 module.exports = router;

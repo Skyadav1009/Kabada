@@ -1266,8 +1266,10 @@ const ContainerView: React.FC<ContainerViewProps> = ({ container, adminPassword,
           containerName={container.name}
           currentWebhookUrl={container.webhookUrl || ''}
           adminPassword={adminPassword}
+          hasAdminPassword={!!container.readOnly}
           onClose={() => setShowSettingsModal(false)}
           onRefresh={refreshContainer}
+          onDeleted={onClose}
         />
       )}
     </div>
