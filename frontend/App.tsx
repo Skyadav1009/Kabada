@@ -5,7 +5,7 @@ import Button from './components/Button';
 import ContainerView from './components/ContainerView';
 import GitHubSandbox from './components/GitHubSandbox';
 import { useToast } from './components/Toast';
-import { createContainer, searchContainers, getContainerById, unlockContainer, getRecentContainers, importGitHubRepo } from './services/storageService';
+import { createContainer, searchContainers, getContainerById, unlockContainer, getRecentContainers, importGitHubRepo, getContainerInfo } from './services/storageService';
 import AdminLogin from './components/AdminLogin';
 import AdminDashboard from './components/AdminDashboard';
 import { Container, ContainerSummary, ViewState, GitHubImportResult } from './types';
@@ -130,12 +130,43 @@ const App: React.FC = () => {
             setViewState(ViewState.SANDBOX);
             return;
           } catch (e) {
-            // Fall through to unlock
+            // Fall through to check container info
           }
         }
-        // No saved password — go to unlock screen
-        setSelectedContainerId(containerId);
-        setViewState(ViewState.UNLOCK);
+        // No saved password — check if container is temporary (no password required)
+        (async () => {
+          try {
+            const info = await getContainerInfo(containerId);
+            if (info && info.isTemporary) {
+              // Temporary container - can be accessed without password
+              // Use unlockContainer with empty password (backend allows this for isTemporary)
+              const container = await unlockContainer(containerId, '');
+              if (container) {
+                const ghInfo = info.githubInfo || { owner: '', repo: '', branch: 'main', description: '', stars: 0, language: '' };
+                setGithubImportResult({
+                  containerId,
+                  containerName: info.name || '',
+                  password: '', // No password needed
+                  isTemporary: true,
+                  sandboxUrl: `#/sandbox/${containerId}`,
+                  fileCount: container.files?.length || 0,
+                  skippedCount: 0,
+                  totalSize: container.files?.reduce((sum, f) => sum + (f.size || 0), 0) || 0,
+                  repoInfo: ghInfo,
+                });
+                setViewState(ViewState.SANDBOX);
+                return;
+              }
+            }
+            // Not temporary or failed to load — go to unlock screen
+            setSelectedContainerId(containerId);
+            setViewState(ViewState.UNLOCK);
+          } catch (e) {
+            // Error checking container info — go to unlock screen
+            setSelectedContainerId(containerId);
+            setViewState(ViewState.UNLOCK);
+          }
+        })();
         return;
       }
 

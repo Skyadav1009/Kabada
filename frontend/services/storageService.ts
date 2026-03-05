@@ -98,6 +98,31 @@ export const getContainerById = async (id: string, adminPassword?: string): Prom
   }
 };
 
+// Get basic container info (for checking if password is required)
+export interface ContainerInfo {
+  id: string;
+  name: string;
+  isTemporary: boolean;
+  readOnly: boolean;
+  githubInfo?: {
+    owner: string;
+    repo: string;
+    branch: string;
+    description: string;
+    stars: number;
+    language: string;
+  } | null;
+}
+
+export const getContainerInfo = async (id: string): Promise<ContainerInfo | null> => {
+  try {
+    const data = await apiRequest<ContainerInfo>(`/containers/${id}/info`);
+    return data;
+  } catch {
+    return null;
+  }
+};
+
 // Unlock container (verify + get)
 export const unlockContainer = async (id: string, password: string): Promise<Container | null> => {
   try {

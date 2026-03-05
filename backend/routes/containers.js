@@ -176,6 +176,28 @@ router.get('/search', async (req, res) => {
   }
 });
 
+// Get basic container info (for checking if password is required)
+router.get('/:id/info', async (req, res) => {
+  try {
+    const container = await Container.findById(req.params.id);
+
+    if (!container) {
+      return res.status(404).json({ error: 'Container not found' });
+    }
+
+    res.json({
+      id: container._id,
+      name: container.name,
+      isTemporary: container.isTemporary,
+      readOnly: container.readOnly,
+      githubInfo: container.githubInfo || null
+    });
+  } catch (error) {
+    console.error('Get container info error:', error);
+    res.status(500).json({ error: 'Failed to get container info' });
+  }
+});
+
 // Verify password for a container
 router.post('/:id/verify', async (req, res) => {
   try {
@@ -186,14 +208,22 @@ router.post('/:id/verify', async (req, res) => {
       return res.status(404).json({ error: 'Container not found' });
     }
 
-    let isValid = await container.verifyPassword(password);
+    let isValid = false;
     let isAdmin = false;
 
-    // If regular password fails and it's a read-only container, check admin password
-    if (!isValid && container.readOnly) {
-      isValid = await container.verifyAdminPassword(password);
-      if (isValid) {
-        isAdmin = true;
+    // Temporary containers (GitHub imports) don't require password verification
+    if (container.isTemporary) {
+      isValid = true;
+      isAdmin = false; // Temporary containers are not admin-controlled
+    } else {
+      isValid = await container.verifyPassword(password);
+
+      // If regular password fails and it's a read-only container, check admin password
+      if (!isValid && container.readOnly) {
+        isValid = await container.verifyAdminPassword(password);
+        if (isValid) {
+          isAdmin = true;
+        }
       }
     }
 
