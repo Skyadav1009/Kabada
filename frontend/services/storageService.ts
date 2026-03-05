@@ -417,6 +417,14 @@ export const deleteContainer = async (id: string, password: string): Promise<{ s
   });
 };
 
+// Save GitHub container (convert temporary to permanent with user password)
+export const saveGitHubContainer = async (id: string, password: string): Promise<{ success: boolean; message: string; isTemporary: boolean }> => {
+  return await apiRequest<{ success: boolean; message: string; isTemporary: boolean }>(`/containers/${id}/save`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+};
+
 // --- GitHub Import APIs ---
 export const importGitHubRepo = async (
   repoUrl: string,

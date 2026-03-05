@@ -11,6 +11,54 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Delete container files helper
+const deleteContainerFiles = async (container) => {
+  for (const file of container.files) {
+    try {
+      if (file.publicId) {
+        const resourceType = file.resourceType || 'raw';
+        await cloudinary.uploader.destroy(file.publicId, { resource_type: resourceType });
+      } else if (file.path && !file.path.startsWith('http') && fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    } catch (e) {
+      console.error(`Error deleting file ${file.originalName}:`, e);
+    }
+  }
+};
+
+// Cleanup temporary containers (GitHub imports not saved by user)
+const cleanupTemporaryContainers = async () => {
+  console.log('🧹 Starting cleanup of temporary containers...');
+
+  try {
+    // 24 hours ago
+    const cutoffDate = new Date();
+    cutoffDate.setHours(cutoffDate.getHours() - 24);
+
+    // Find temporary containers created before the cutoff date
+    const temporaryContainers = await Container.find({
+      isTemporary: true,
+      createdAt: { $lt: cutoffDate }
+    });
+
+    console.log(`Found ${temporaryContainers.length} temporary containers to clean up.`);
+
+    for (const container of temporaryContainers) {
+      console.log(`Deleting temporary container: ${container.name} (${container._id})`);
+      await deleteContainerFiles(container);
+      await Container.findByIdAndDelete(container._id);
+    }
+
+    if (temporaryContainers.length > 0) {
+      console.log('✅ Temporary container cleanup complete.');
+    }
+
+  } catch (error) {
+    console.error('❌ Error during temporary container cleanup:', error);
+  }
+};
+
 const cleanupUnusedContainers = async () => {
   console.log('🧹 Starting cleanup of unused containers...');
 
@@ -19,31 +67,17 @@ const cleanupUnusedContainers = async () => {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - 30);
 
-    // Find containers accessed before the cutoff date
+    // Find containers accessed before the cutoff date (excluding temporary ones, handled separately)
     const staleContainers = await Container.find({
-      lastAccessed: { $lt: cutoffDate }
+      lastAccessed: { $lt: cutoffDate },
+      isTemporary: { $ne: true }
     });
 
     console.log(`Found ${staleContainers.length} stale containers.`);
 
     for (const container of staleContainers) {
       console.log(`Deleting container: ${container.name} (${container._id})`);
-
-      // Delete files from Cloudinary and local storage
-      for (const file of container.files) {
-        try {
-          if (file.publicId) {
-            const resourceType = file.resourceType || 'raw';
-            await cloudinary.uploader.destroy(file.publicId, { resource_type: resourceType });
-          } else if (file.path && !file.path.startsWith('http') && fs.existsSync(file.path)) {
-            fs.unlinkSync(file.path);
-          }
-        } catch (e) {
-          console.error(`Error deleting file ${file.originalName}:`, e);
-        }
-      }
-
-      // Delete the container from DB
+      await deleteContainerFiles(container);
       await Container.findByIdAndDelete(container._id);
     }
 
@@ -61,9 +95,13 @@ const cleanupUnusedContainers = async () => {
 // Schedule task to run every day at midnight (00:00)
 // Format: minute hour day-of-month month day-of-week
 const initCronJobs = () => {
-  // Run every day at midnight
+  // Run stale container cleanup every day at midnight
   cron.schedule('0 0 * * *', cleanupUnusedContainers);
-  console.log('⏰ Cleanup cron job scheduled (Daily at 00:00).');
+  console.log('⏰ Stale container cleanup cron job scheduled (Daily at 00:00).');
+
+  // Run temporary container cleanup every hour
+  cron.schedule('0 * * * *', cleanupTemporaryContainers);
+  console.log('⏰ Temporary container cleanup cron job scheduled (Hourly).');
 };
 
-module.exports = { initCronJobs, cleanupUnusedContainers };
+module.exports = { initCronJobs, cleanupUnusedContainers, cleanupTemporaryContainers };

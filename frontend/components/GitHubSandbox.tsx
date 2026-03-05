@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Container, FileMeta, GitHubImportResult, AgentMessage, AgentFileChange, AgentRepoContext, AVAILABLE_AGENTS } from '../types';
-import { getContainerById, getFileDownloadUrl, commitToGitHub, sendAgentMessage } from '../services/storageService';
+import { getContainerById, getFileDownloadUrl, commitToGitHub, sendAgentMessage, saveGitHubContainer, deleteContainer } from '../services/storageService';
 import { WebContainer, FileSystemTree } from '@webcontainer/api';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -12,7 +12,7 @@ import {
     Share2, Play, Square, Terminal, Eye, GripHorizontal,
     RefreshCw, Loader2, AlertCircle, Edit3, Save, GitCommit,
     Key, MessageSquare, Bot, Send, Sparkles, FileEdit, FilePlus,
-    ChevronsUpDown, Zap
+    ChevronsUpDown, Zap, Trash2, Lock, Settings
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -379,6 +379,17 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
     const [cloudSandboxId, setCloudSandboxId] = useState<string>('');
     const [isStartingCloud, setIsStartingCloud] = useState(false);
     const [cloudError, setCloudError] = useState('');
+
+    // Save/Delete Container state
+    const [showSaveModal, setShowSaveModal] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [savePassword, setSavePassword] = useState('');
+    const [deletePassword, setDeletePassword] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [isTemporary, setIsTemporary] = useState(importResult.isTemporary ?? true);
+    const [saveError, setSaveError] = useState('');
+    const [deleteError, setDeleteError] = useState('');
 
     // Refs
     const webContainerRef = useRef<WebContainer | null>(null);
@@ -1120,6 +1131,54 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
         setTimeout(() => setCopied(false), 2000);
     }, [importResult.sandboxUrl]);
 
+    // Save container handler
+    const handleSaveContainer = useCallback(async () => {
+        if (!savePassword || savePassword.length < 4) {
+            setSaveError('Password must be at least 4 characters');
+            return;
+        }
+        setIsSaving(true);
+        setSaveError('');
+        try {
+            const result = await saveGitHubContainer(importResult.containerId, savePassword);
+            if (result.success) {
+                setIsTemporary(false);
+                setShowSaveModal(false);
+                setSavePassword('');
+                // Store password in session for potential delete
+                sessionStorage.setItem(`container-pass-${importResult.containerId}`, savePassword);
+            }
+        } catch (err: any) {
+            setSaveError(err.message || 'Failed to save container');
+        } finally {
+            setIsSaving(false);
+        }
+    }, [savePassword, importResult.containerId]);
+
+    // Delete container handler
+    const handleDeleteContainer = useCallback(async () => {
+        if (!deletePassword) {
+            setDeleteError('Password is required');
+            return;
+        }
+        setIsDeleting(true);
+        setDeleteError('');
+        try {
+            const result = await deleteContainer(importResult.containerId, deletePassword);
+            if (result.success) {
+                // Clean up session storage
+                sessionStorage.removeItem(`container-pass-${importResult.containerId}`);
+                sessionStorage.removeItem(`sandbox-pass-${importResult.containerId}`);
+                sessionStorage.removeItem(`sandbox-info-${importResult.containerId}`);
+                onClose();
+            }
+        } catch (err: any) {
+            setDeleteError(err.message || 'Failed to delete container');
+        } finally {
+            setIsDeleting(false);
+        }
+    }, [deletePassword, importResult.containerId, onClose]);
+
     // Panel resize with mouse
     const handleResizeStart = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
@@ -1314,6 +1373,28 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                         <span className="text-xs text-zinc-600 hidden sm:inline">
                             {importResult.fileCount} files
                         </span>
+
+                        {/* Save/Delete Container button */}
+                        {isTemporary ? (
+                            <button
+                                onClick={() => setShowSaveModal(true)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors font-medium"
+                                title="Save this sandbox as a container with a password"
+                            >
+                                <Save className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Save</span>
+                            </button>
+                        ) : (
+                            <button
+                                onClick={() => setShowDeleteModal(true)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-600/80 text-white rounded-lg hover:bg-red-500 transition-colors font-medium"
+                                title="Delete this container"
+                            >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Delete</span>
+                            </button>
+                        )}
+
                         <button
                             onClick={handleCopyUrl}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg hover:bg-zinc-700 transition-colors border border-zinc-700"
@@ -2018,6 +2099,168 @@ const GitHubSandbox: React.FC<GitHubSandboxProps> = ({ importResult, onClose }) 
                     </div>
                 )
             }
+
+            {/* Save Container Modal */}
+            {showSaveModal && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-emerald-500/20 rounded-lg">
+                                    <Save className="h-5 w-5 text-emerald-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-semibold text-white">Save Container</h3>
+                                    <p className="text-xs text-zinc-500">Set a password to save and manage this sandbox</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => { setShowSaveModal(false); setSaveError(''); setSavePassword(''); }}
+                                className="text-zinc-500 hover:text-zinc-300 transition-colors"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-5 space-y-4">
+                            <p className="text-sm text-zinc-400">
+                                This sandbox is currently temporary. Save it with a password to keep it permanently and enable deletion.
+                            </p>
+                            <div>
+                                <label className="block text-sm font-medium text-zinc-300 mb-2">
+                                    <Lock className="h-4 w-4 inline mr-1" />
+                                    Password (min 4 characters)
+                                </label>
+                                <input
+                                    type="password"
+                                    value={savePassword}
+                                    onChange={(e) => setSavePassword(e.target.value)}
+                                    placeholder="Enter password..."
+                                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                                    autoFocus
+                                />
+                            </div>
+                            {saveError && (
+                                <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                                    <AlertCircle className="h-4 w-4" />
+                                    <span>{saveError}</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800 bg-zinc-900/50">
+                            <button
+                                onClick={() => { setShowSaveModal(false); setSaveError(''); setSavePassword(''); }}
+                                className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors"
+                                disabled={isSaving}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSaveContainer}
+                                disabled={isSaving || savePassword.length < 4}
+                                className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {isSaving ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Saving...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Save className="h-4 w-4" />
+                                        Save Container
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Container Modal */}
+            {showDeleteModal && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-red-500/20 rounded-lg">
+                                    <Trash2 className="h-5 w-5 text-red-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-semibold text-white">Delete Container</h3>
+                                    <p className="text-xs text-zinc-500">This action cannot be undone</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => { setShowDeleteModal(false); setDeleteError(''); setDeletePassword(''); }}
+                                className="text-zinc-500 hover:text-zinc-300 transition-colors"
+                            >
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-5 space-y-4">
+                            <p className="text-sm text-zinc-400">
+                                Enter the password you used when saving this container to delete it permanently.
+                            </p>
+                            <div>
+                                <label className="block text-sm font-medium text-zinc-300 mb-2">
+                                    <Lock className="h-4 w-4 inline mr-1" />
+                                    Container Password
+                                </label>
+                                <input
+                                    type="password"
+                                    value={deletePassword}
+                                    onChange={(e) => setDeletePassword(e.target.value)}
+                                    placeholder="Enter password..."
+                                    className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                                    autoFocus
+                                />
+                            </div>
+                            {deleteError && (
+                                <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                                    <AlertCircle className="h-4 w-4" />
+                                    <span>{deleteError}</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800 bg-zinc-900/50">
+                            <button
+                                onClick={() => { setShowDeleteModal(false); setDeleteError(''); setDeletePassword(''); }}
+                                className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 rounded-lg hover:bg-zinc-800 transition-colors"
+                                disabled={isDeleting}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleDeleteContainer}
+                                disabled={isDeleting || !deletePassword}
+                                className="flex items-center gap-2 px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {isDeleting ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Deleting...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash2 className="h-4 w-4" />
+                                        Delete Container
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };

@@ -1073,6 +1073,41 @@ router.get('/:id/uploads/:filename', async (req, res) => {
   }
 });
 
+// Save container (convert temporary GitHub import to permanent with user password)
+router.post('/:id/save', async (req, res) => {
+  try {
+    const { password } = req.body;
+    const container = await Container.findById(req.params.id);
+
+    if (!container) {
+      return res.status(404).json({ error: 'Container not found' });
+    }
+
+    if (!password || password.length < 4) {
+      return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    }
+
+    // Only allow saving temporary containers (GitHub imports)
+    if (!container.isTemporary) {
+      return res.status(400).json({ error: 'This container is already saved' });
+    }
+
+    // Update password and mark as permanent
+    container.passwordHash = password; // Will be hashed by pre-save middleware
+    container.isTemporary = false;
+    await container.save();
+
+    res.json({ 
+      success: true, 
+      message: 'Container saved successfully. Use this password to delete the container later.',
+      isTemporary: false
+    });
+  } catch (error) {
+    console.error('Save container error:', error);
+    res.status(500).json({ error: 'Failed to save container' });
+  }
+});
+
 // Delete container (requires password verification)
 // If container has adminPassword, only admin password can delete
 // If container doesn't have adminPassword, regular password can delete
@@ -1087,6 +1122,11 @@ router.delete('/:id', async (req, res) => {
 
     if (!password) {
       return res.status(400).json({ error: 'Password is required to delete container' });
+    }
+
+    // Temporary containers cannot be deleted by users (only by cron/admin)
+    if (container.isTemporary) {
+      return res.status(403).json({ error: 'This is a temporary sandbox. Save it first to enable deletion with a password.' });
     }
 
     let isAuthorized = false;

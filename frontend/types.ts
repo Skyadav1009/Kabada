@@ -37,6 +37,7 @@ export interface Container {
   currentViews: number;
   readOnly?: boolean;
   isAdmin?: boolean;
+  isTemporary?: boolean;
   deleted?: boolean;
   message?: string;
   webhookUrl?: string;
@@ -52,6 +53,7 @@ export interface ContainerSummary {
   maxViews: number;
   currentViews: number;
   readOnly?: boolean;
+  isTemporary?: boolean;
   createdAt: number;
 }
 
@@ -70,6 +72,7 @@ export interface GitHubImportResult {
   containerId: string;
   containerName: string;
   password: string;
+  isTemporary: boolean;
   sandboxUrl: string;
   fileCount: number;
   skippedCount: number;

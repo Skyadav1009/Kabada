@@ -442,6 +442,7 @@ router.post('/import', async (req, res) => {
             passwordHash: autoPassword,
             readOnly: false,
             maxViews: 0,
+            isTemporary: true, // GitHub imports are temporary until user saves with password
             githubInfo: {
                 owner,
                 repo,
@@ -495,6 +496,7 @@ router.post('/import', async (req, res) => {
             containerId: container._id,
             containerName: finalName,
             password: autoPassword,
+            isTemporary: true,
             sandboxUrl: `#/sandbox/${container._id}`,
             fileCount: uploadedFiles.length,
             skippedCount,

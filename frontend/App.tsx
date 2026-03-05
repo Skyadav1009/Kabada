@@ -120,6 +120,7 @@ const App: React.FC = () => {
               containerId,
               containerName: info.containerName || '',
               password: savedPassword,
+              isTemporary: info.isTemporary ?? true,
               sandboxUrl: `#/sandbox/${containerId}`,
               fileCount: info.fileCount || 0,
               skippedCount: info.skippedCount || 0,
@@ -202,6 +203,7 @@ const App: React.FC = () => {
         skippedCount: result.skippedCount,
         totalSize: result.totalSize,
         repoInfo: result.repoInfo,
+        isTemporary: result.isTemporary,
       }));
       setGithubImportResult(result);
       setViewState(ViewState.SANDBOX);
@@ -306,6 +308,7 @@ const App: React.FC = () => {
       // Try sessionStorage as secondary source
       const savedInfo = sessionStorage.getItem(`sandbox-info-${container.id}`);
       let repoInfo = { owner: '', repo: '', branch: 'main', description: '', stars: 0, language: '' };
+      let isTemporary = container.isTemporary ?? true;
 
       if (ghInfo && ghInfo.owner && ghInfo.repo) {
         // Best source: directly from MongoDB via API
@@ -322,6 +325,7 @@ const App: React.FC = () => {
         try {
           const info = JSON.parse(savedInfo);
           if (info.repoInfo) repoInfo = info.repoInfo;
+          if (info.isTemporary !== undefined) isTemporary = info.isTemporary;
         } catch (e) { /* fall through */ }
       } else {
         // Last resort: parse from container name (may be truncated but better than nothing)
@@ -336,6 +340,7 @@ const App: React.FC = () => {
         containerId: container.id,
         containerName: container.name,
         password: '',
+        isTemporary: isTemporary,
         sandboxUrl: `#/sandbox/${container.id}`,
         fileCount: container.fileCount,
         skippedCount: 0,

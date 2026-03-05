@@ -78,6 +78,10 @@ const containerSchema = new mongoose.Schema({
     stars: { type: Number, default: 0 },
     language: { type: String, default: '' }
   },
+  isTemporary: {
+    type: Boolean,
+    default: false
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -150,6 +154,7 @@ containerSchema.methods.toSafeObject = function () {
     maxViews: this.maxViews,
     currentViews: this.currentViews,
     readOnly: this.readOnly,
+    isTemporary: this.isTemporary,
     githubInfo: this.githubInfo || null,
     createdAt: this.createdAt,
     lastAccessed: this.lastAccessed
@@ -166,6 +171,7 @@ containerSchema.methods.toSummary = function () {
     maxViews: this.maxViews,
     currentViews: this.currentViews,
     readOnly: this.readOnly,
+    isTemporary: this.isTemporary,
     githubInfo: this.githubInfo || null,
     createdAt: this.createdAt
   };
