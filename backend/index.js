@@ -43,6 +43,7 @@ const allowedOrigins = [
   process.env.FRONTEND_URL
 ].filter(Boolean);
 
+
 // Middleware
 app.use(cors({
   origin: function (origin, callback) {
