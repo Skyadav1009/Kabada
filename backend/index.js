@@ -33,11 +33,15 @@ console.log('Environment:', process.env.NODE_ENV || 'development');
 
 // Middleware
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow all origins to fix CORS issues
-    callback(null, true);
-  },
-  credentials: true
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://kabada.vercel.app',
+    'https://kabada.onrender.com'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
