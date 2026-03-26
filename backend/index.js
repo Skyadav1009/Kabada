@@ -31,31 +31,11 @@ if (missingEnvVars.length > 0) {
 console.log('MongoDB URI loaded:', MONGODB_URI ? MONGODB_URI.replace(/:([^@]+)@/, ':****@') : 'NOT SET');
 console.log('Environment:', process.env.NODE_ENV || 'development');
 
-// Allowed origins for CORS
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:5173',
-  'https://kabada.vercel.app',
-  'https://kabada.surveyzen.live',
-  'https://quickshare-dr4.pages.dev',
-  process.env.FRONTEND_URL
-].filter(Boolean);
-
-
 // Middleware
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.log('CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
+    // Allow all origins to fix CORS issues
+    callback(null, true);
   },
   credentials: true
 }));
@@ -65,7 +45,7 @@ app.use(express.urlencoded({ extended: true }));
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: true,
     methods: ['GET', 'POST'],
     credentials: true
   }
