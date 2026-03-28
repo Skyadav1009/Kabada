@@ -37,7 +37,7 @@ app.use(cors({
     'http://localhost:5173',
     'http://localhost:3000',
     'https://kabada.vercel.app',
-    'https://kabada.onrender.com'
+    'https://kabada-mjhi.onrender.com'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,

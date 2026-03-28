@@ -11,7 +11,7 @@ import PDFSlideshow from './PDFSlideshow';
 import { FileText, Upload, Trash2, Download, Copy, Save, Check, RefreshCw, MessageCircle, Send, Image as ImageIcon, CloudUpload, File, FileVideo, FileAudio, FileArchive, FileCode, FileSpreadsheet, Presentation, FileType, Play, Eye, Share2, FolderDown, FolderUp, Search, Plus, Settings, Pin, PinOff } from 'lucide-react';
 
 // Socket.IO server URL (matches API_BASE without /api)
-const SOCKET_URL = (import.meta as any).env.VITE_API_URL ? (import.meta as any).env.VITE_API_URL.replace('/api', '') : 'https://quickshare-1-9gjk.onrender.com';
+const SOCKET_URL = (import.meta as any).env.VITE_API_URL ? (import.meta as any).env.VITE_API_URL.replace('/api', '') : 'https://kabada-mjhi.onrender.com';
 
 interface ContainerViewProps {
   container: Container;
